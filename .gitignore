@@ -1,0 +1,17 @@
+# Build directories
+build/
+build-*/
+
+# Fetched (not submoduled) dependencies
+deps/boringssl/
+
+# Runtime-generated
+cert-hash.js
+
+# Tooling artifacts
+compile_commands.json
+.cache/
+
+# Object/archive files outside build dirs
+*.o
+*.a
