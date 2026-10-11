@@ -1,0 +1,6 @@
+[submodule "deps/srt"]
+	path = deps/srt
+	url = https://github.com/maxolgi/srt.git
+[submodule "deps/lsquic"]
+	path = deps/lsquic
+	url = https://github.com/litespeedtech/lsquic.git
