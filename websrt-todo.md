@@ -1,4 +1,4 @@
-# websrt-cpp — outstanding items
+# libwebsrt — outstanding items
 
 Status after the P0–P2 sessions (fork `websrt` @ e3de15a pushed; repo master
 at 61a0ef4, unpushed). Gates green: M0 loopback, P1 byte-for-byte interop +
@@ -6,7 +6,7 @@ ffprobe, P2 golden commands 2×.
 
 ## Human actions
 
-- [ ] Review and push websrt-cpp master (22 commits, `45b6e75`…`61f0ef4`).
+- [ ] Review and push libwebsrt master (22 commits, `45b6e75`…`61f0ef4`).
 - [ ] Browser arbiter (P2 final check): publish via the local golden command
       (see `examples/ffmpeg/README.md`), then open the WebSRT player against
       the local gateway — needs the WebSRT web dev server (`./build.sh web`

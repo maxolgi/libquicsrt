@@ -1,4 +1,4 @@
-# WebSRT-cpp — Master Plan
+# libwebsrt — Master Plan
 
 Status: planned (not yet implemented). This document is the complete, self-contained
 plan for the implementation sessions. Companion repos: `WebSRT` (Rust, unmodified),
@@ -22,13 +22,13 @@ plan for the implementation sessions. Companion repos: `WebSRT` (Rust, unmodifie
 | No MXL integration in this repo | Out of scope; composable later via ffmpeg (cbcrc/FFmpeg dmf-mxl) or gst-mxl-rs |
 | Rust WebSRT repo: ZERO changes | The fork speaks skip-induction, so the existing gateway interops as-is |
 | srt-core = fork of Haivision/srt (`maxolgi/srt`) | User intent: Haivision SRT; hand-written port rejected; stock-submodule-only rejected (fd-bound API, no injection point, Induction-mandatory listener) |
-| Repo is C++ (sibling to WebSRT at `~/maxolgi/websrt-cpp`) | — |
+| Repo is C++ (sibling to WebSRT at `~/maxolgi/libwebsrt`) | — |
 
 ## Architecture
 
 ```
                          ┌──────────────────────────────────────────────┐
-                         │ websrt-cpp                                    │
+                         │ libwebsrt                                      │
                          │                                               │
   apps / ffmpeg ────────►│ libwebsrt   Publisher / Subscriber façade     │
                          │    │                                          │
@@ -104,8 +104,8 @@ data, retransmit, RTT seeding all green.
 ## Repo layout
 
 ```
-websrt-cpp/
-├── websrt-cpp.md        # this plan
+libwebsrt/
+├── libwebsrt.md         # this plan
 ├── PLAN.md              # (alias or merge — pick one at bootstrap)
 ├── AGENTS.md  README.md  LICENSE
 ├── CMakeLists.txt  CMakePresets.json  vcpkg.json

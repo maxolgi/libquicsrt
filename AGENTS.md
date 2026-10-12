@@ -70,7 +70,7 @@ C++ implementation of WebSRT: client library (`libwebsrt`), CLI gateway
 modified from this repo**) and `maxolgi/srt` (fork of Haivision/srt).
 
 **Status: bootstrap pending.** The full design, decision log, phases, and gates
-live in `websrt-cpp.md` (read it before implementing). This file defines the
+live in `libwebsrt.md` (read it before implementing). This file defines the
 working conventions once code lands.
 
 ## Build commands (target — created at bootstrap)
@@ -96,7 +96,7 @@ their own settings), BoringSSL via lsquic's `LIBSSL_DIR`, nasm.
 1. Forked `srt` (`~/maxolgi/srt`, pushes to `maxolgi/srt`) changes → commit there, human
    pushes, then bump the pin: `git -C deps/srt fetch && git -C deps/srt checkout <commit>`
    followed by `./build.sh setup && ./build.sh lib`. Submodule commits in
-   websrt-cpp are the equivalent of WebSRT's Cargo.lock pinning — new fork
+   libwebsrt are the equivalent of WebSRT's Cargo.lock pinning — new fork
    commits are NOT picked up automatically.
 2. Changing only `include/` / `src/` → `./build.sh lib`, no submodule work.
 3. Changing `src/ffmpeg/` → rebuild the patched FFmpeg (`./build.sh ffmpeg`).
@@ -113,7 +113,7 @@ git will clobber it). Pin policy: **releases only, never upstream master**
 (FFmpeg-supported line, fewer rebase surprises). Upgrades = fetch the new
 release tag from Haivision upstream, rebase `websrt` onto it, re-verify the
 gate-OFF build, then bump the submodule pin. Six config-gated patches (upstream
-UDP behavior unchanged; see `websrt-cpp.md` §"srt fork — patch list") — five
+UDP behavior unchanged; see `libwebsrt.md` §"srt fork — patch list") — five
 code patches plus one verified-upstream no-op:
 
 1. Virtual transport seam behind `CChannel` (sendto→callback, eventfd wake
@@ -127,7 +127,7 @@ code patches plus one verified-upstream no-op:
    DROPREQ); no patch needed, gate-ON test added
 
 Work in `~/maxolgi/srt`, commit, ask the human to push, then bump the submodule pin in
-websrt-cpp. Keep patches minimal and upstreamable in spirit (MPL-2.0).
+libwebsrt. Keep patches minimal and upstreamable in spirit (MPL-2.0).
 
 `lsquic` + BoringSSL are consumed unmodified (submodule/vcpkg). lsquic's WT
 support is **server-side only** (`LSQUIC_WEBTRANSPORT_SERVER_SUPPORT`) — the
@@ -278,7 +278,7 @@ to the request.
 
 Transform tasks into verifiable goals and loop until verified. For multi-step
 tasks, state a plan with per-step verification. Phases and gates in
-`websrt-cpp.md` are the success criteria — do not declare a phase done without
+`libwebsrt.md` are the success criteria — do not declare a phase done without
 its gate green.
 
 If you are not sure about something dont overthink it and use internet search

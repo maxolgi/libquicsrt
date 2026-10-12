@@ -1,4 +1,4 @@
-# websrt-cpp
+# libwebsrt
 
 C++ implementation of WebSRT: `libwebsrt` (embeddable client library for
 publishing and subscribing SRT-over-WebTransport streams), a CLI gateway with
@@ -9,7 +9,7 @@ reference implementation and interop oracle) and
 [maxolgi/srt](https://github.com/maxolgi/srt) (fork of Haivision/srt).
 
 **Status: bootstrap in progress.** The design, phases, and gates live in
-[websrt-cpp.md](websrt-cpp.md).
+[libwebsrt.md](libwebsrt.md).
 
 ## Build
 

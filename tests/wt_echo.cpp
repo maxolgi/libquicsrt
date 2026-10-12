@@ -1,4 +1,4 @@
-// wt_echo: P1 subscriber-primitive validation (websrt-cpp.md, Risks #1),
+// wt_echo: P1 subscriber-primitive validation (libwebsrt.md, Risks #1),
 // now on the libwebsrt foundation (EventLoop + WTClient). A WebTransport
 // session is opened to the live Rust gateway, the gateway's SRT Conclusion
 // handshake is received as WT datagrams, and garbage WT datagrams are sent
