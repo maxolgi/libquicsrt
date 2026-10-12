@@ -10,9 +10,11 @@ add_library(websrt_warnings INTERFACE)
 target_compile_options(websrt_warnings INTERFACE -Wall -Wextra -Wpedantic)
 
 # srt fork: static, no built-in crypto (WebTransport's TLS provides it),
-# C++ standard sync primitives instead of pthreads.
+# C++ standard sync primitives instead of pthreads, virtual transport seam
+# compiled in (datagrams via owner-supplied callback, not OS UDP sockets).
 set(ENABLE_ENCRYPTION OFF CACHE BOOL "" FORCE)
 set(ENABLE_STDCXX_SYNC ON CACHE BOOL "" FORCE)
+set(ENABLE_VIRTUAL_TRANSPORT ON CACHE BOOL "" FORCE)
 set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
 set(ENABLE_APPS OFF CACHE BOOL "" FORCE)
 add_subdirectory(deps/srt)
