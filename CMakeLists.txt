@@ -83,7 +83,8 @@ if(WEBSRT_ENABLE_WT)
         src/srt_session/publisher.cpp
         src/websrt/config.cpp
         src/websrt/subscriber.cpp
-        src/websrt/publisher.cpp)
+        src/websrt/publisher.cpp
+        src/websrt/websrt_c.cpp)
     target_include_directories(websrt PRIVATE
         deps/srt/srtcore
         ${CMAKE_BINARY_DIR}/deps/srt
@@ -176,6 +177,20 @@ if(WEBSRT_ENABLE_WT)
         WEBSRT_FIXTURE_TS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/fixtures/test.ts")
     add_test(NAME publisher_test COMMAND publisher_test)
     set_tests_properties(publisher_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    # c_api_test: the extern-C ABI (websrt_c.h) the FFmpeg websrt://
+    # protocol links against - offline misuse always runs; the live
+    # gate (publish + subscribe round trip through the C API against
+    # the Rust gateway oracle) skips the same way as its siblings.
+    add_executable(c_api_test tests/c_api_test.cpp)
+    target_compile_features(c_api_test PRIVATE cxx_std_20)
+    set_target_properties(c_api_test PROPERTIES CXX_EXTENSIONS OFF)
+    target_link_libraries(c_api_test PRIVATE websrt_warnings websrt Threads::Threads)
+    target_compile_definitions(c_api_test PRIVATE
+        WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js"
+        WEBSRT_FIXTURE_TS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/fixtures/test.ts")
+    add_test(NAME c_api_test COMMAND c_api_test)
+    set_tests_properties(c_api_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
     # websrt-dump: the P1 interop app - subscribe with the public API and
     # write the stream's TS bytes to a file (driven by scripts/interop.sh).
