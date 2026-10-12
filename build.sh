@@ -9,22 +9,15 @@ Commands:
     setup      One-time: submodule init, BoringSSL fetch+build, CMake configure (release)
     lib        Build libwebsrt (+ libsrt, lsquic)
     test       Run tests via ctest (release)
-    gateway    Build the C++ gateway binary
     ffmpeg     Build patched upstream FFmpeg with the websrt protocol
     ffmpeg-gate Run the P2 golden-commands gate (needs the Rust gateway + ffmpeg)
     interop    Run interop tests against the Rust gateway
-    restart    Restart the gateway (supervisord, production only)
 
 Environment:
     WEBSRT_ENABLE_WT=OFF  setup without WebTransport: skips BoringSSL and
                           configures CMake with -DWEBSRT_ENABLE_WT=OFF
                           (M0/CI fast path, no lsquic either)
 EOF
-}
-
-not_implemented() {
-    echo "build.sh: '$1' not implemented yet (phase P1-P3)" >&2
-    exit 1
 }
 
 # Pinned per lsquic's README.md and appveyor-linux.yml (tag 0.20250807.0 is
@@ -128,9 +121,6 @@ case "${1:-}" in
         ;;
     test)
         ctest --preset release
-        ;;
-    gateway | restart)
-        not_implemented "$1"
         ;;
     ffmpeg)
         build_ffmpeg

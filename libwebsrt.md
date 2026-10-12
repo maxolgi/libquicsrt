@@ -7,8 +7,8 @@ plan for the implementation sessions. Companion repos: `WebSRT` (Rust, unmodifie
 ## Deliverables
 
 1. **`libwebsrt`** — C++ client library: publish and subscribe WebSRT streams.
-2. **C++ gateway** — full CLI-parity replacement of the Rust gateway. CLI-only
-   (no GUI), production intent. Serves the existing browser player unchanged.
+2. **C++ gateway** — *moved to the `websrt-gateway-cpp` repo* (repo split;
+   see git history for the original scope).
 3. **FFmpeg integration** — `websrt://` URLProtocol, input **and** output,
    targeting upstream FFmpeg.
 
@@ -39,11 +39,8 @@ plan for the implementation sessions. Companion repos: `WebSRT` (Rust, unmodifie
                          │    └─► srt-session: srt fork in virtual mode  │
                          │          (skip-induction both roles)          │
                          │                                               │
-                         │ gateway: lsquic WT server + srt fork          │
-                         │  initiator + broadcaster fanout + stock-mode  │
-                         │  libsrt UDP ingest (same submodule)           │
-                         │  + static player serving + cert-hash.js       │
-                         └──────────────────────────────────────────────┘
+                          │ gateway: moved to the websrt-gateway-cpp repo   │
+                          └──────────────────────────────────────────────┘
 ```
 
 - **SRT core**: fork `Haivision/srt` → `github.com/maxolgi/srt`, consumed as a git
@@ -115,14 +112,11 @@ libwebsrt/
 │   ├── wt/              # client.cpp, server.cpp, capsule.cpp, cert.cpp (hash pinning)
 │   ├── srt_session/     # virtual_transport.cpp, subscriber.cpp, publisher.cpp
 │   ├── core/            # event_loop.cpp (epoll: lsquic + srt_epoll + timers), broadcaster ring
-│   ├── gateway/         # main.cpp cli.cpp gateway.cpp session.cpp registry.cpp
-│   │                    # stream_registry.cpp hooks.cpp limits.cpp cert.cpp web_server.cpp
-│   │                    # ingest/srt_ingest.cpp (stock-mode libsrt, UDP)
 │   └── ffmpeg/          # websrt_protocol.c (URLProtocol)
 ├── apps/                # websrt-dump, websrt-publish-file
 ├── examples/ffmpeg/     # patch + build-against-upstream-ffmpeg script + golden commands
 ├── tests/               # loopback_srt, wt_echo, unit tests
-└── scripts/             # interop.sh (drives Rust gateway + fixtures), websrt.conf for supervisord
+└── scripts/             # interop.sh (drives Rust gateway + fixtures)
 ```
 
 C++20 for our code; submodules build with their own settings.
@@ -130,19 +124,9 @@ Toolchain: gcc 13, CMake ≥ 3.24, BoringSSL (via lsquic's LIBSSL_DIR), nasm.
 
 ## Port map (Rust → C++, gateway phase)
 
-| Rust source | C++ equivalent |
-|---|---|
-| `gateway.rs` (accept loop, viewer cap, graceful drain) | `gateway.cpp` |
-| `session.rs` (recv_pump, LossInjector sim-loss, QUIC stats log) | `session.cpp` |
-| `registry.rs` (~2ms ticker, tick concurrency 16, credit budget 256 msgs/tick, `drop_backlog` on first connect) | `registry.cpp` |
-| `stream_registry.rs` + `broadcaster.rs` (ring fanout, first-wins publish) | `stream_registry.cpp` + core ring |
-| `srt_sender.rs` (SrtConfig, initiator drive, PAYLOAD_SIZE) | srt fork initiator role |
-| `ingest/srt_listener.rs` (streamid required, first-wins, latency-scaled buffers 8192–320000, FC ≥ RCVBUF discipline) | `srt_ingest.cpp` (stock libsrt UDP mode) |
-| `cert.rs` (self-signed regen per boot, mkcert, runtime cert-hash.js) | `cert.cpp` |
-| `web_server.rs` (health endpoint, static `web/dist`) | `web_server.cpp` — serves the existing player unchanged |
-| `nocc.rs` (no-op QUIC CC so SRT owns congestion control) | **no lsquic equivalent** — approximate via max pacing rate + large flow-control windows; document as behavioral difference |
-| egui GUI / `gui.rs` | none — CLI-only by decision |
-| `log_buffer.rs` | plain stderr/stdout logging (no GUI to feed) |
+Gateway phases moved to the `websrt-gateway-cpp` repo. The original Rust →
+C++ port map is preserved in this file's git history for the gateway repo to
+mine.
 
 ## Phases & gates
 
@@ -164,12 +148,9 @@ Toolchain: gcc 13, CMake ≥ 3.24, BoringSSL (via lsquic's LIBSSL_DIR), nasm.
   ```
 
   plus testgen → Rust gateway → browser playback.
-- **P3 — Gateway.** lsquic WT server + initiator sessions + UDP ingest + fanout +
-  certs + web server + supervisord conf. *Gates: unmodified browser pages play from
-  the C++ gateway; Rust `mock_obs` and `wt_hs_probe` pass against it; 50-viewer
-  concurrency test (ticker avg < 5 ms, zero viewer lag); parity matrix vs the Rust
-  gateway.*
-- **P4 — Hardening.** Config-file support, packaging, docs, CI polish.
+- **P3/P4 — Gateway + hardening.** Gateway phases moved to the
+  `websrt-gateway-cpp` repo; the original phase/gate text is preserved in
+  git history.
 
 ## Testing & oracles
 

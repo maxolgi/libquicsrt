@@ -1,8 +1,9 @@
 # libwebsrt
 
-C++ implementation of WebSRT: `libwebsrt` (embeddable client library for
-publishing and subscribing SRT-over-WebTransport streams), a CLI gateway with
-Rust-gateway parity, and an FFmpeg `websrt://` protocol handler.
+C++ implementation of WebSRT, scoped to the client library and FFmpeg
+integration: `libwebsrt` (embeddable library for publishing and subscribing
+SRT-over-WebTransport streams) and an FFmpeg `websrt://` protocol handler.
+The C++ gateway lives in the separate `websrt-gateway-cpp` repo.
 
 Companion repos: [WebSRT](https://github.com/maxolgi/WebSRT) (Rust — the
 reference implementation and interop oracle) and

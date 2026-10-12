@@ -64,8 +64,9 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 Never revove these guidelines, only edit below.
 ---
 
-C++ implementation of WebSRT: client library (`libwebsrt`), CLI gateway
-(Rust-gateway parity), and FFmpeg `websrt://` protocol. Companion repos:
+C++ implementation of WebSRT: client library (`libwebsrt`) and FFmpeg
+`websrt://` protocol. The C++ gateway lives in the separate
+`websrt-gateway-cpp` repo (split from this one). Companion repos:
 `WebSRT` (Rust — the reference implementation and interop oracle, **never
 modified from this repo**) and `maxolgi/srt` (fork of Haivision/srt).
 
@@ -77,7 +78,6 @@ working conventions once code lands.
 
     ./build.sh setup     # one-time: submodule init/update (srt fork, lsquic), BoringSSL, cmake configure
     ./build.sh lib       # build libwebsrt (+ apps)
-    ./build.sh gateway   # build the C++ gateway binary
     ./build.sh test      # unit + loopback (M0) + wt_echo tests
     ./build.sh interop   # scripts/interop.sh — requires the Rust gateway running locally
     ./build.sh ffmpeg    # builds patched upstream FFmpeg with the websrt protocol (examples/ffmpeg/)
@@ -100,8 +100,6 @@ their own settings), BoringSSL via lsquic's `LIBSSL_DIR`, nasm.
    commits are NOT picked up automatically.
 2. Changing only `include/` / `src/` → `./build.sh lib`, no submodule work.
 3. Changing `src/ffmpeg/` → rebuild the patched FFmpeg (`./build.sh ffmpeg`).
-4. Changing `src/gateway/` → `./build.sh gateway` + `./build.sh restart`
-   (production only, via supervisord).
 
 ## Forked dependency
 
@@ -142,14 +140,11 @@ client side hand-drives extended CONNECT via raw `lsxpack` pseudo-headers.
   sockets, subscriber/publisher drivers
 - `src/core/` — single epoll event loop (lsquic engine + `srt_epoll` + timers),
   broadcaster ring
-- `src/gateway/` — the gateway binary: accept loop, session/registry/ticker,
-  stream registry, hooks, limits, certs, web server, UDP ingest (stock-mode libsrt)
 - `src/ffmpeg/` — `websrt://` URLProtocol (input + output)
 - `apps/` — `websrt-dump` (subscribe→file), `websrt-publish-file` (loop a .ts)
 - `tests/` — M0 loopback (skip-induction over in-memory queue, zero syscalls),
   wt_echo, units
-- `scripts/` — `interop.sh` (drives the Rust WebSRT gateway + fixtures),
-  supervisord conf
+- `scripts/` — `interop.sh` (drives the Rust WebSRT gateway + fixtures)
 - `deps/` — submodules: `srt` (the fork), `lsquic`
 
 ## Architecture layers
@@ -157,13 +152,6 @@ client side hand-drives extended CONNECT via raw `lsxpack` pseudo-headers.
 - **`libwebsrt`** — the embeddable client: Publisher (SRT listener-role +
   sender, `?publish=`) and Subscriber (SRT listener-role + receiver, `?stream=`),
   both over WebTransport datagrams using the forked srt in virtual mode.
-- **gateway** — CLI-parity replacement of the Rust gateway (CLI-only, no GUI).
-  lsquic WT server; per-browser-session SRT initiator (skip-induction
-  Conclusion-first, cookie=0); broadcaster fanout (TS bytes never modified);
-  SRT/UDP ingest via stock-mode libsrt (streamid = routing key, first-wins);
-  cert modes + runtime `cert-hash.js`; static serving of the existing Rust
-  player (`web/dist` — path configured, never rebuilt here); health endpoint;
-  supervisord.
 - **ffmpeg** — `websrt://host:port?stream=name[&passphrase=…]` as input and
   output against upstream FFmpeg; blocking façade over the event-loop thread;
   TS chunking 188-aligned, ≤ 1128-byte SRT payloads.
@@ -196,20 +184,6 @@ client side hand-drives extended CONNECT via raw `lsxpack` pseudo-headers.
 - **Known difference vs Rust:** no no-op QUIC congestion controller exists in
   lsquic (Rust `nocc.rs` silences quinn CC so SRT owns it). We approximate with
   max pacing rate + large flow-control windows and document the difference.
-
-## Runtime (gateway, production)
-
-- Runs under supervisord: config `scripts/websrt-cpp.conf` → deploy like WebSRT's.
-- Logs: `/var/log/websrt-cpp/`.
-- Restart: `sudo supervisorctl restart websrt-cpp` after rebuild.
-- On boot the gateway writes `cert-hash.js` next to the served web assets
-  (hash for self-signed, null for mkcert).
-
-## Cert modes
-
-- `--cert-mode self` (default): self-signed ECDSA, **regenerated on every boot —
-  never persisted**. `--cert-mode mkcert`: loads PEMs.
-- Cert hash changes on every restart — browser must reload the page.
 
 ## Gotchas
 

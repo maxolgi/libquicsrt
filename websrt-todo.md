@@ -6,7 +6,13 @@ ffprobe, P2 golden commands 2×.
 
 ## Human actions
 
-- [ ] Review and push libwebsrt master (22 commits, `45b6e75`…`61f0ef4`).
+- [ ] Rename the GitHub repo (new home `maxolgi/libwebsrt`; the local origin
+      already points there — nothing pushed yet).
+- [ ] Create `websrt-gateway-cpp` on GitHub (the gateway phases P3/P4 move
+      there; a follow-up session mines the gateway plan text from this repo's
+      git history).
+- [ ] Push both repos.
+
 - [ ] Browser arbiter (P2 final check): publish via the local golden command
       (see `examples/ffmpeg/README.md`), then open the WebSRT player against
       the local gateway — needs the WebSRT web dev server (`./build.sh web`
@@ -23,25 +29,12 @@ ffprobe, P2 golden commands 2×.
   `scripts/interop.sh`, then restoring the normal build. Not yet done.
 - P2 tuning: `Publisher::End(5 s)` frequently reports "send buffer did not
   drain in time" (WT pacing vs TSBPD at stream tail); falls back to `Stop()`
-  cleanly and the name frees, but the drain window deserves tuning in P3.
-- P3 — the C++ gateway (next major work):
-  1. lsquic WT server accept + cert modes (self-signed regen-per-boot,
-     mkcert PEM, runtime `cert-hash.js` emission)
-  2. Per-session SRT initiator (caller, skip-induction, cookie 0) + ~2 ms
-     ticker (concurrency 16, credit budget 256 msgs/tick, `drop_backlog` on
-     first connected tick)
-  3. Broadcaster ring + stream registry (first-wins occupancy, TS bytes
-     never modified)
-  4. SRT/UDP ingest via stock-mode libsrt (streamid routing, latency-scaled
-     buffers 8192–320000, FC ≥ RCVBUF)
-  5. Web server: static `web/dist` serving + health endpoint; supervisord
-     conf (`scripts/websrt-cpp.conf`)
-  6. No-op-CC approximation: max pacing rate + large FC windows (documented
-     behavioral difference vs Rust `nocc.rs`)
-  Gates: unmodified browser pages play from the C++ gateway; Rust
-  `wt_hs_probe` / `mock_obs` pass against it; 50-viewer concurrency
-  (ticker avg < 5 ms, zero viewer lag); parity matrix vs the Rust gateway.
-- P4 — hardening: config-file support, packaging, docs, CI polish.
+  cleanly and the name frees, but the drain window deserves a later tuning
+  pass.
+- P3/P4 — the gateway phases (lsquic WT server, SRT initiator, broadcaster
+  fanout, UDP ingest, cert modes, web server, then hardening) live in the
+  `websrt-gateway-cpp` repo now; the original breakdown is preserved in this
+  file's git history for the gateway repo to mine.
 
 ## Observations for the WebSRT repo (Rust, separate repo — fix there)
 
@@ -49,8 +42,8 @@ ffprobe, P2 golden commands 2×.
   stall the wtransport accept loop 10–20 s (`BrowserSession::create().await`
   / registry insert timing suspected). Sessions attaching during recovery
   can receive `messages_pushed=0` until EOF. Short client connect timeouts
-  worsen it (abandoned handshakes pile up as `TimedOut`). Our P3 gateway
-  must not reproduce this.
+  worsen it (abandoned handshakes pile up as `TimedOut`). The
+  websrt-gateway-cpp gateway must not reproduce this.
 - 404-reset race: the gateway sometimes resets the CONNECT stream before
   the client reads the 404 — client sees a transport failure instead of a
   clean rejection. Flush the response before resetting.
