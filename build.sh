@@ -6,7 +6,7 @@ usage() {
 Usage: ./build.sh <command>
 
 Commands:
-    setup      One-time: submodule init, CMake configure (release)
+    setup      One-time: submodule init, BoringSSL fetch+build, CMake configure (release)
     lib        Build libwebsrt (+ libsrt)
     test       Run tests via ctest (release)
     gateway    Build the C++ gateway binary
@@ -21,10 +21,30 @@ not_implemented() {
     exit 1
 }
 
+# Pinned per lsquic's README.md and appveyor-linux.yml (tag 0.20250807.0 is
+# the revision lsquic CI builds against).
+BORINGSSL_COMMIT=e20e8486554098772673b55ea76bb003d0b330e5
+
+# deps/boringssl is fetched (not a submodule, gitignored) and built
+# out-of-source; idempotent: no-op clone when the pin matches, fetch+checkout
+# otherwise, incremental rebuild when already built.
+setup_boringssl() {
+    if [ ! -d deps/boringssl/.git ]; then
+        git clone https://github.com/google/boringssl.git deps/boringssl
+    fi
+    if [ "$(git -C deps/boringssl rev-parse HEAD)" != "$BORINGSSL_COMMIT" ]; then
+        git -C deps/boringssl fetch origin
+        git -C deps/boringssl checkout -f "$BORINGSSL_COMMIT"
+    fi
+    cmake -S deps/boringssl -B deps/boringssl/build \
+        -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+    cmake --build deps/boringssl/build -j "$(nproc)"
+}
+
 case "${1:-}" in
     setup)
         git submodule update --init
-        echo "build.sh: note: BoringSSL/lsquic setup arrives in P1"
+        setup_boringssl
         cmake --preset release
         ;;
     lib)
