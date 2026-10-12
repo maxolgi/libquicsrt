@@ -38,3 +38,17 @@ target_compile_features(smoke_test PRIVATE cxx_std_20)
 set_target_properties(smoke_test PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(smoke_test PRIVATE websrt_warnings websrt)
 add_test(NAME smoke_test COMMAND smoke_test)
+
+find_package(Threads REQUIRED)
+
+# M0 loopback: two forked srt sockets over an in-memory wire pair (gated
+# virtual transport seam, zero OS sockets). The srt CMake uses
+# directory-scoped includes, so the headers and the generated version.h are
+# referenced explicitly.
+add_executable(loopback_srt tests/loopback_srt.cpp)
+target_compile_features(loopback_srt PRIVATE cxx_std_20)
+set_target_properties(loopback_srt PROPERTIES CXX_EXTENSIONS OFF)
+target_include_directories(loopback_srt PRIVATE deps/srt/srtcore ${CMAKE_BINARY_DIR}/deps/srt)
+target_compile_definitions(loopback_srt PRIVATE SRT_ENABLE_VIRTUAL_TRANSPORT)
+target_link_libraries(loopback_srt PRIVATE websrt_warnings Threads::Threads srt_static)
+add_test(NAME loopback_srt COMMAND loopback_srt)
