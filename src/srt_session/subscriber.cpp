@@ -28,12 +28,12 @@ constexpr int kBytesPerPacket = 1500 - 28;
 // Stop() from another thread without busy-waiting.
 constexpr int kRecvSliceMs = 250;
 
-bool SetOptInt(SRTSOCKET u, SRT_SOCKOPT opt, int value)
-{
-    return srt_setsockopt(u, 0, opt, &value, sizeof value) != SRT_ERROR;
-}
+// Margin added to the TSBPD latency when draining a gracefully-ended
+// stream: the receiver may still hold up to one latency window of
+// not-yet-releasable packets.
+constexpr int kDrainMarginMs = 1000;
 
-bool SetOptI64(SRTSOCKET u, SRT_SOCKOPT opt, int64_t value)
+bool SetOptInt(SRTSOCKET u, SRT_SOCKOPT opt, int value)
 {
     return srt_setsockopt(u, 0, opt, &value, sizeof value) != SRT_ERROR;
 }
@@ -177,7 +177,15 @@ int SubscriberSession::VtSend(const char* data, int len)
     // Runs on srt's internal threads. Touches nothing but the thread-safe
     // WTClient: a full queue or a gone session returns false, which we
     // report as a send failure - UDP-like loss that srt retransmits. Never
-    // block an srt thread.
+    // block an srt thread. Once the session is closed (drain window), the
+    // WT session is gone for good: swallow the send and claim success so
+    // srt's control machinery stays quiet instead of erroring the socket
+    // out from under the drain. (Relaxed atomic: a stale false only risks
+    // one send attempt into the closed client, which fails harmlessly.)
+    if (closed_.load(std::memory_order_relaxed))
+    {
+        return len;
+    }
     return client_->SendDatagram(data, static_cast<std::size_t>(len)) ? len : -1;
 }
 
@@ -214,9 +222,11 @@ bool SubscriberSession::StartListener(std::string* error)
         ok                 = ok && SetOptInt(listener, SRTO_PAYLOADSIZE, params_.payload_size);
         ok                 = ok && SetOptInt(listener, SRTO_RCVLATENCY, params_.tsbpd_latency_ms);
         ok                 = ok && SetOptInt(listener, SRTO_PEERLATENCY, params_.tsbpd_latency_ms);
-        ok                 = ok && SetOptI64(listener, SRTO_SNDBUF, static_cast<int64_t>(buf_pkts) * kBytesPerPacket);
-        ok                 = ok && SetOptI64(listener, SRTO_RCVBUF, static_cast<int64_t>(buf_pkts) * kBytesPerPacket);
-        ok                 = ok && SetOptInt(listener, SRTO_SKIP_INDUCTION, 1);
+        // SRTO_SNDBUF/SRTO_RCVBUF take an int (bytes): 320000 pkts x 1472
+        // is ~470 MB, but BufferPackets' floor keeps us well inside int.
+        ok = ok && SetOptInt(listener, SRTO_SNDBUF, buf_pkts * kBytesPerPacket);
+        ok = ok && SetOptInt(listener, SRTO_RCVBUF, buf_pkts * kBytesPerPacket);
+        ok = ok && SetOptInt(listener, SRTO_SKIP_INDUCTION, 1);
         if (rtt_ms > 0)
         {
             ok = ok && SetOptInt(listener, SRTO_INITIAL_RTT, rtt_ms);
@@ -364,7 +374,16 @@ int SubscriberSession::Read(char* buf, int len, int timeout_ms)
             switch (state_)
             {
             case State::kClosed:
-                return graceful_ ? kReadEnd : kReadClosed;
+                // A graceful peer end keeps the accepted socket open for
+                // the TSBPD drain; everything else ends here. Local stops
+                // never drain (Stop must stay prompt).
+                if (!graceful_ || local_stop_ || accepted_ == SRT_INVALID_SOCK ||
+                    std::chrono::steady_clock::now() >= drain_deadline_)
+                {
+                    return graceful_ ? kReadEnd : kReadClosed;
+                }
+                sock = accepted_; // drain mode
+                break;
             case State::kConnected:
                 sock = accepted_;
                 break;
@@ -415,6 +434,24 @@ int SubscriberSession::Read(char* buf, int len, int timeout_ms)
             if (std::chrono::steady_clock::now() >= deadline)
             {
                 return kReadTimeout;
+            }
+            // Drain mode: after a quiet slice, an empty receive buffer is
+            // the definitive end - nothing new can arrive once the session
+            // closed. (RCVDATA counts buffered-but-not-yet-releasable
+            // packets too, so 0 really means the TSBPD holds nothing.)
+            bool draining = false;
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                draining = state_ == State::kClosed && accepted_ == sock;
+            }
+            if (draining)
+            {
+                int pending = 0;
+                int pend_sz = static_cast<int>(sizeof pending);
+                if (srt_getsockopt(sock, 0, SRTO_RCVDATA, &pending, &pend_sz) == 0 && pending == 0)
+                {
+                    return kReadEnd;
+                }
             }
             continue; // slice elapsed; re-check the session state first
         }
@@ -490,7 +527,36 @@ void SubscriberSession::RequestClose()
 
 void SubscriberSession::Finalize()
 {
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ != State::kClosed)
+        {
+            local_stop_ = true; // a local stop never defers the teardown
+        }
+    }
     Finalize("stopped locally", true);
+    CompleteDeferredTeardown();
+}
+
+void SubscriberSession::CompleteDeferredTeardown()
+{
+    SRTSOCKET            accepted = SRT_INVALID_SOCK;
+    SRTVirtualTransport* vt       = nullptr;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        accepted = std::exchange(accepted_, SRT_INVALID_SOCK);
+        vt       = std::exchange(vt_, nullptr);
+    }
+    // Same ordering rule as Finalize below: the transport handle outlives
+    // the close that sends the shutdown through it.
+    if (accepted != SRT_INVALID_SOCK)
+    {
+        srt_close(accepted);
+    }
+    if (vt != nullptr)
+    {
+        srt_virtual_transport_release(vt);
+    }
 }
 
 void SubscriberSession::Finalize(const std::string& reason, bool graceful)
@@ -499,6 +565,7 @@ void SubscriberSession::Finalize(const std::string& reason, bool graceful)
     SRTSOCKET            accepted           = SRT_INVALID_SOCK;
     SRTVirtualTransport* vt                 = nullptr;
     bool                 have_accept_thread = false;
+    bool                 defer_drain        = false;
 
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -514,11 +581,23 @@ void SubscriberSession::Finalize(const std::string& reason, bool graceful)
         }
         // Terminal FIRST: wakes Read/WaitEstablished and parks OnDatagram
         // (which re-checks state_ under the lock).
-        state_             = State::kClosed;
+        state_ = State::kClosed;
+        closed_.store(true, std::memory_order_relaxed);
         listener           = std::exchange(listener_, SRT_INVALID_SOCK);
-        accepted           = std::exchange(accepted_, SRT_INVALID_SOCK);
-        vt                 = std::exchange(vt_, nullptr);
         have_accept_thread = accept_thread_.joinable();
+        // A graceful peer end keeps the accepted socket (and with it the
+        // transport) for the TSBPD drain - see the header.
+        defer_drain = graceful && !local_stop_ && accepted_ != SRT_INVALID_SOCK;
+        if (defer_drain)
+        {
+            drain_deadline_ =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(params_.tsbpd_latency_ms + kDrainMarginMs);
+        }
+        else
+        {
+            accepted = std::exchange(accepted_, SRT_INVALID_SOCK);
+            vt       = std::exchange(vt_, nullptr);
+        }
         cv_.notify_all();
     }
 

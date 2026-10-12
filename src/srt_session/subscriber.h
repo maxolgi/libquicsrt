@@ -67,6 +67,8 @@
 
 #include <arpa/inet.h>
 
+#include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
@@ -175,8 +177,18 @@ private:
     // Terminal transition: records the reason, wakes waiters, tears the
     // srt side down. `graceful` marks locally-requested or peer-clean
     // ends. Idempotent; no lock held on entry. An earlier SetupError()
-    // reason wins over `reason`.
+    // reason wins over `reason`. On a graceful PEER end with a live
+    // accepted socket, the accepted socket and transport are kept open
+    // (bounded by the TSBPD latency) so Read can drain what the receiver
+    // buffer already holds - the gateway closes the session the moment
+    // the ring is empty, but TSBPD still withholds the last ~latency of
+    // delivered data. Finalize() (Stop/destructor) completes that
+    // deferred teardown.
     void Finalize(const std::string& reason, bool graceful);
+
+    // Closes a drain-deferred accepted socket and releases its transport
+    // (no-op when nothing was deferred).
+    void CompleteDeferredTeardown();
 
     enum class State
     {
@@ -205,6 +217,14 @@ private:
     SRTSOCKET               accepted_ = SRT_INVALID_SOCK;
     SRTVirtualTransport*    vt_       = nullptr;
     std::thread             accept_thread_;
+
+    // Drain window on a graceful peer end: Read may keep delivering the
+    // accepted socket's buffered messages until this point (TSBPD latency
+    // plus margin); afterwards the end is final.
+    std::chrono::steady_clock::time_point drain_deadline_ = std::chrono::steady_clock::time_point::max();
+
+    // Lock-free mirror of state_ == kClosed for the srt send callback.
+    std::atomic<bool> closed_{false};
 };
 
 } // namespace websrt
