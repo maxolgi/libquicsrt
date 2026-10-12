@@ -62,8 +62,11 @@ case "${1:-}" in
     test)
         ctest --preset release
         ;;
-    gateway | ffmpeg | interop | restart)
+    gateway | ffmpeg | restart)
         not_implemented "$1"
+        ;;
+    interop)
+        exec scripts/interop.sh
         ;;
     -h | --help | help)
         usage
