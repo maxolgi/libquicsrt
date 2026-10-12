@@ -19,6 +19,27 @@ set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
 set(ENABLE_APPS OFF CACHE BOOL "" FORCE)
 add_subdirectory(deps/srt)
 
+# Consumer export surface. An out-of-tree consumer (the websrt-gateway-cpp
+# repo does add_subdirectory(deps/libwebsrt)) links these ALIASes and
+# nothing else:
+#   websrt::websrt   - libwebsrt plus its internal headers (src/) and the
+#                      srt fork's headers/link with the
+#                      SRT_ENABLE_VIRTUAL_TRANSPORT gate, so the fork API
+#                      (srt_attach_virtual_transport, SRTO_SKIP_INDUCTION,
+#                      generated version.h) is callable directly.
+#   websrt::srt-deps - the srt surface alone (headers + gate + link) for
+#                      consumers that drive raw forked sockets.
+#   websrt::wt-deps  - the lsquic + BoringSSL + zlib chain (headers +
+#                      link) for consumers hosting their own lsquic engine;
+#                      WT-on builds only.
+add_library(websrt_srt_deps INTERFACE)
+add_library(websrt::srt-deps ALIAS websrt_srt_deps)
+target_include_directories(websrt_srt_deps INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/srt/srtcore
+    ${CMAKE_CURRENT_BINARY_DIR}/deps/srt)
+target_compile_definitions(websrt_srt_deps INTERFACE SRT_ENABLE_VIRTUAL_TRANSPORT)
+target_link_libraries(websrt_srt_deps INTERFACE srt_static)
+
 # WebTransport support: lsquic (submodule) over BoringSSL (fetched by
 # ./build.sh setup, never committed). OFF keeps the srt-only fast path
 # (M0/CI): no BoringSSL, no lsquic.
@@ -61,20 +82,24 @@ add_library(websrt STATIC
 add_library(websrt::websrt ALIAS websrt)
 target_compile_features(websrt PUBLIC cxx_std_20)
 set_target_properties(websrt PROPERTIES CXX_EXTENSIONS OFF)
-target_include_directories(websrt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories(websrt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(websrt PRIVATE websrt_warnings Threads::Threads)
+target_include_directories(websrt PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(websrt
+    PUBLIC websrt_srt_deps
+    PRIVATE websrt_warnings Threads::Threads)
 target_compile_definitions(websrt PRIVATE
     WEBSRT_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
     WEBSRT_VERSION_MINOR=${PROJECT_VERSION_MINOR}
     WEBSRT_VERSION_PATCH=${PROJECT_VERSION_PATCH}
     WEBSRT_VERSION_STRING="${PROJECT_VERSION}")
 
-# WebTransport client: the lsquic engine host (src/wt). Carries the
-# lsquic/BoringSSL/ZLIB link line so consumers of websrt need none of it.
-# The srt-session layer (forked srt in virtual-transport mode) and the
-# public Subscriber façade ride along: the same include paths and gating
-# define as the M0 loopback harness.
+# WebTransport client: the lsquic engine host (src/wt). The
+# lsquic/BoringSSL/ZLIB chain rides PUBLIC via websrt_wt_deps (exported as
+# websrt::wt-deps), so consumers of websrt get the whole link line and can
+# also host their own lsquic engine. The srt-session layer (forked srt in
+# virtual-transport mode) and the public Subscriber façade ride along: the
+# same include paths and gating define as the M0 loopback harness.
 if(WEBSRT_ENABLE_WT)
     find_package(ZLIB REQUIRED)
     # deps/srt/apps/apputil.cpp: the fork's CreateAddr (inet_pton fast path
@@ -83,12 +108,26 @@ if(WEBSRT_ENABLE_WT)
     # file is the fork's own, compiled read-only; MPL-2.0. The fork's build
     # defines SRT_VERSION globally (its CMakeLists line ~848); mirror that
     # for the one PrintLibVersion() use from the generated version.h.
-    file(STRINGS "${CMAKE_BINARY_DIR}/deps/srt/version.h" srt_version_string_line
+    file(STRINGS "${CMAKE_CURRENT_BINARY_DIR}/deps/srt/version.h" srt_version_string_line
          REGEX "^#define SRT_VERSION_STRING ")
     string(REGEX REPLACE "^#define SRT_VERSION_STRING \"(.*)\"$" "\\1"
            srt_version_string "${srt_version_string_line}")
     set_source_files_properties(deps/srt/apps/apputil.cpp PROPERTIES
         COMPILE_DEFINITIONS SRT_VERSION="${srt_version_string}")
+
+    # The exported WT dependency chain (websrt::wt-deps, see the export
+    # comment above): everything a consumer needs to run its own lsquic
+    # engine against BoringSSL.
+    add_library(websrt_wt_deps INTERFACE)
+    add_library(websrt::wt-deps ALIAS websrt_wt_deps)
+    target_include_directories(websrt_wt_deps INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/deps/lsquic/include
+        ${WEBSRT_BORINGSSL_DIR}/include)
+    target_link_libraries(websrt_wt_deps INTERFACE
+        lsquic ZLIB::ZLIB
+        ${WEBSRT_BORINGSSL_BUILD}/libssl.a
+        ${WEBSRT_BORINGSSL_BUILD}/libcrypto.a)
+
     target_sources(websrt PRIVATE
         src/wt/client.cpp
         src/srt_session/subscriber.cpp
@@ -99,15 +138,11 @@ if(WEBSRT_ENABLE_WT)
         src/websrt/subscriber.cpp
         src/websrt/publisher.cpp
         src/websrt/websrt_c.cpp)
-    target_include_directories(websrt PRIVATE
-        deps/srt/srtcore
-        deps/srt/apps
-        ${CMAKE_BINARY_DIR}/deps/srt
-        deps/lsquic/include
-        ${WEBSRT_BORINGSSL_DIR}/include)
-    target_compile_definitions(websrt PRIVATE SRT_ENABLE_VIRTUAL_TRANSPORT)
-    target_link_libraries(websrt PRIVATE lsquic ZLIB::ZLIB srt_static
-        ${WEBSRT_BORINGSSL_BUILD}/libssl.a ${WEBSRT_BORINGSSL_BUILD}/libcrypto.a)
+    # apps/ stays private: apputil.hpp/netinet_any.h are build inputs, not
+    # consumer API. srtcore/generated/binary-dir includes and the VT gate
+    # flow from websrt_srt_deps.
+    target_include_directories(websrt PRIVATE deps/srt/apps)
+    target_link_libraries(websrt PUBLIC websrt_wt_deps)
 endif()
 
 enable_testing()
@@ -217,6 +252,12 @@ if(WEBSRT_ENABLE_WT)
         WEBSRT_FIXTURE_TS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/fixtures/test.ts")
     add_test(NAME c_api_test COMMAND c_api_test)
     set_tests_properties(c_api_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    # consumer_test: the export-contract proof. It compiles in its own
+    # directory scope (tests/consumer/) against ONLY the exported targets -
+    # no source-tree include paths, no deps/ paths - exactly like an
+    # external add_subdirectory(deps/libwebsrt) consumer.
+    add_subdirectory(tests/consumer)
 
     # websrt-dump: the P1 interop app - subscribe with the public API and
     # write the stream's TS bytes to a file (driven by scripts/interop.sh).
