@@ -1,6 +1,6 @@
-From cbfaa749612a39241d0d1fb6552e23a465686b47 Mon Sep 17 00:00:00 2001
+From 850de279722648c9dd6394eb29d3664ffe83290a Mon Sep 17 00:00:00 2001
 From: maxolgi <maxolgi@users.noreply.github.com>
-Date: Mon, 12 Oct 2026 08:46:07 -0400
+Date: Mon, 12 Oct 2026 09:15:14 -0400
 Subject: [PATCH] avformat: add websrt:// protocol (WebSRT via libwebsrt)
 
 Publish (output) or subscribe (input) to a WebSRT gateway - SRT over
@@ -16,14 +16,16 @@ passphrase is parsed and logged as reserved/ignored. MPEG-TS bytes are
 framed by the library into 188-aligned SRT live messages of at most
 1128 bytes; reads bounce through an internal one-message buffer;
 writes loop over the library's partial-accept contract. Subscribing
-retries HTTP 404 for up to 10 s (live-edge join), a stalled peer
-bounds writes to 30 s and reads to 15 s.
+retries HTTP 404 and transient transport stalls (library-default
+connect timeout per attempt, 20 s window; live-edge join); publishing
+retries a stalled start once. A stalled peer bounds writes to 30 s
+and reads to 15 s.
 ---
  configure                 |   5 +
  libavformat/Makefile      |   1 +
  libavformat/protocols.c   |   1 +
- libavformat/websrtproto.c | 483 ++++++++++++++++++++++++++++++++++++++
- 4 files changed, 490 insertions(+)
+ libavformat/websrtproto.c | 502 ++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 509 insertions(+)
  create mode 100644 libavformat/websrtproto.c
 
 diff --git a/configure b/configure
@@ -89,10 +91,10 @@ index 93a6d67..428e1ba 100644
  extern const URLProtocol ff_librtmp_protocol;
 diff --git a/libavformat/websrtproto.c b/libavformat/websrtproto.c
 new file mode 100644
-index 0000000..014aee6
+index 0000000..cfe53a4
 --- /dev/null
 +++ b/libavformat/websrtproto.c
-@@ -0,0 +1,483 @@
+@@ -0,0 +1,502 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -166,9 +168,12 @@ index 0000000..014aee6
 +#define WEBSRT_PAYLOAD_SIZE 1128
 +
 +/* Retry window for subscribing to a stream whose publisher has not
-+ * registered the name yet (live-edge join during broadcast startup). */
-+#define WEBSRT_OPEN_RETRY_MS 10000
-+#define WEBSRT_OPEN_RETRY_DELAY_US 250000
++ * registered the name yet (live-edge join during broadcast startup).
++ * Attempts use the library's default connect timeout (10 s) - cutting
++ * it short abandons in-flight QUIC handshakes server-side, which the
++ * local oracle punishes with longer accept stalls. */
++#define WEBSRT_OPEN_RETRY_MS 20000
++#define WEBSRT_OPEN_RETRY_DELAY_US 500000
 +
 +/* Per-call budgets: publisher writes block under SRT backpressure
 + * (timeout below), reads poll; both get an overall stall bound. */
@@ -388,34 +393,50 @@ index 0000000..014aee6
 +        return ret;
 +
 +    if (s->is_output) {
-+        /* Direction decides semantics: output publishes the name. */
-+        s->pub = websrt_publisher_create();
-+        if (!s->pub)
-+            return AVERROR(ENOMEM);
-+        st = websrt_publisher_start(s->pub, host, port, stream,
-+                                    s->cert_hash[0] ? s->cert_hash : NULL,
-+                                    s->latency_ms, 0);
-+        if (st != WEBSRT_OK) {
-+            const char *why = websrt_publisher_last_error(s->pub);
-+            if (st == WEBSRT_EREJECTED) {
-+                av_log(h, AV_LOG_ERROR, "stream name in use: '%s' is held by a live source\n", stream);
-+                ret = AVERROR(EADDRINUSE);
-+            } else if (st == WEBSRT_ETIMEOUT) {
-+                ret = AVERROR(ETIMEDOUT);
-+            } else {
-+                ret = AVERROR(EIO);
++        /* Direction decides semantics: output publishes the name. One
++         * retry after a transport-level stall: the gateway's accept
++         * loop can starve transiently under churn (self-healing). */
++        int attempt;
++        for (attempt = 0;; attempt++) {
++            s->pub = websrt_publisher_create();
++            if (!s->pub)
++                return AVERROR(ENOMEM);
++            st = websrt_publisher_start(s->pub, host, port, stream,
++                                        s->cert_hash[0] ? s->cert_hash : NULL,
++                                        s->latency_ms, 0);
++            if (st == WEBSRT_OK)
++                break;
++            if ((st == WEBSRT_ETIMEOUT || st == WEBSRT_ECONNECT) && attempt == 0) {
++                av_log(h, AV_LOG_WARNING, "publish start stalled (%s); retrying in 3 s\n",
++                       websrt_publisher_last_error(s->pub));
++                websrt_publisher_destroy(s->pub);
++                s->pub = NULL;
++                av_usleep(3000000);
++                continue;
 +            }
-+            av_log(h, AV_LOG_ERROR, "publish start failed: %s\n", why);
-+            websrt_publisher_destroy(s->pub);
-+            s->pub = NULL;
-+            return ret;
++            {
++                const char *why = websrt_publisher_last_error(s->pub);
++                if (st == WEBSRT_EREJECTED) {
++                    av_log(h, AV_LOG_ERROR, "stream name in use: '%s' is held by a live source\n", stream);
++                    ret = AVERROR(EADDRINUSE);
++                } else if (st == WEBSRT_ETIMEOUT) {
++                    ret = AVERROR(ETIMEDOUT);
++                } else {
++                    ret = AVERROR(EIO);
++                }
++                av_log(h, AV_LOG_ERROR, "publish start failed: %s\n", why);
++                websrt_publisher_destroy(s->pub);
++                s->pub = NULL;
++                return ret;
++            }
 +        }
 +        av_log(h, AV_LOG_INFO, "publishing '%s' to %s:%d (%s)\n",
 +               stream, host, port, s->cert_hash[0] ? "cert pinned" : "PKI");
 +    } else {
 +        /* Input subscribes; retry while the gateway answers 404 so a
-+         * live-edge join during broadcast startup succeeds, but a
-+         * stream that never appears fails within the retry window. */
++         * live-edge join during broadcast startup succeeds, and ride
++         * out transient transport stalls the same way - but a stream
++         * that never appears fails within the retry window. */
 +        int64_t deadline = av_gettime() + WEBSRT_OPEN_RETRY_MS * 1000LL;
 +        for (;;) {
 +            s->sub = websrt_subscriber_create();
@@ -426,13 +447,13 @@ index 0000000..014aee6
 +                                         s->latency_ms, 0);
 +            if (st == WEBSRT_OK)
 +                break;
-+            if (st == WEBSRT_EREJECTED || st == WEBSRT_ETIMEOUT) {
++            if (st == WEBSRT_EREJECTED || st == WEBSRT_ETIMEOUT || st == WEBSRT_ECONNECT) {
 +                websrt_subscriber_destroy(s->sub);
 +                s->sub = NULL;
 +                if (av_gettime() >= deadline) {
 +                    av_log(h, AV_LOG_ERROR, "stream '%s' not available: %s\n",
 +                           stream, st == WEBSRT_EREJECTED
-+                                      ? "no publisher (HTTP 404)" : "gateway unresponsive");
++                                      ? "no publisher (HTTP 404)" : "gateway unreachable");
 +                    return AVERROR(ECONNREFUSED);
 +                }
 +                av_usleep(WEBSRT_OPEN_RETRY_DELAY_US);
