@@ -257,6 +257,11 @@ struct WtClientCallbacks
     {
         auto* c = reinterpret_cast<WTClient*>(lsquic_stream_get_ctx(stream));
         Log("session stream closed");
+        if (c->state_.load() == WTClient::State::kClosed)
+        {
+            return; // teardown already running (engine destroy path): the
+                    // listener (session) may already be gone - don't touch it
+        }
         if (!c->stream_terminal_)
         {
             c->stream_terminal_ = true;
