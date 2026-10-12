@@ -74,7 +74,7 @@ enum PublisherStartStatus
     kPublishOk = 0,         // stream established; Write may push data
     kPublishInvalidConfig,  // config.validate() failed; LastError() has the reason
     kPublishAlreadyStarted, // Start called twice; a Publisher is single-shot
-    kPublishInvalidTarget,  // the transport rejected the target (e.g. host not an IPv4 literal)
+    kPublishInvalidTarget,  // the target was rejected (e.g. DNS name did not resolve to an IPv4 address)
     kPublishRejected,       // the gateway refused the session: HTTP 403 while the stream name is held by a live source
                             // (first-wins), 429 on limits
     kPublishConnectFailed,  // transport-level failure (TLS, network, engine)

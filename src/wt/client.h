@@ -63,9 +63,14 @@ class WTClient : private EngineHost
 public:
     struct Target
     {
-        std::string   host; // IPv4 dotted quad
+        std::string   host; // name as given: IPv4 dotted quad or DNS name (SNI, :authority, PKI name check)
         std::uint16_t port = 0;
         std::string   path; // with query, e.g. "/wt?stream=demo"
+        // IPv4 dotted quad to dial when `host` is a DNS name (resolved by
+        // the caller before Connect); empty means host itself is the
+        // literal to dial. The dial address never influences SNI or the
+        // PKI SAN check - those always see `host` as typed.
+        std::string resolved_ip;
         // Empty: PKI validation - the certificate chain is verified
         // against the system CA bundle and the host must match a SAN
         // (hostname or IP). Non-empty: pinning - exactly 64 hex chars,
@@ -93,8 +98,9 @@ public:
 
     // Thread-safe. Starts the TLS+QUIC handshake and the extended CONNECT.
     // Returns false when the client is not idle or the target does not parse
-    // (host not an IPv4 literal, zero port, empty path, hash not 64 hex
-    // chars). Runtime failures (socket, engine) surface as OnSessionClosed.
+    // (dial address - host or resolved_ip - not an IPv4 literal, zero port,
+    // empty path, hash not 64 hex chars). Runtime failures (socket, engine)
+    // surface as OnSessionClosed.
     bool Connect(const Target& target);
 
     // Thread-safe. Queues one WT datagram; the context prefix is added

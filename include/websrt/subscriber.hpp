@@ -45,7 +45,7 @@ enum StartStatus
     kStartOk = 0,         // stream established; Read delivers data
     kStartInvalidConfig,  // config.validate() failed; LastError() has the reason
     kStartAlreadyStarted, // Start called twice; a Subscriber is single-shot
-    kStartInvalidTarget,  // the transport rejected the target (e.g. host not an IPv4 literal)
+    kStartInvalidTarget,  // the target was rejected (e.g. DNS name did not resolve to an IPv4 address)
     kStartRejected,       // the gateway refused the session (unknown stream: HTTP 404)
     kStartConnectFailed,  // transport-level failure (TLS, network, engine)
     kStartTimedOut,       // connect_timeout_ms elapsed; the session was torn down

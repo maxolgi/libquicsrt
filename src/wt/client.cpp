@@ -516,13 +516,16 @@ bool WTClient::Connect(const Target& target)
     {
         return false;
     }
-    sockaddr_in peer{};
+    // The dial address is the pre-resolved IP for a DNS-name host; `host`
+    // stays the name as typed (SNI, :authority, PKI SAN check).
+    const std::string& dial = target.resolved_ip.empty() ? target.host : target.resolved_ip;
+    sockaddr_in        peer{};
     peer.sin_family = AF_INET;
     peer.sin_port   = htons(target.port);
     // Empty cert_hash_hex selects PKI validation; otherwise it must parse
     // as the pinned SHA-256 of the certificate DER.
     pin_cert_ = !target.cert_hash_hex.empty();
-    if (target.port == 0 || target.path.empty() || inet_pton(AF_INET, target.host.c_str(), &peer.sin_addr) != 1 ||
+    if (target.port == 0 || target.path.empty() || inet_pton(AF_INET, dial.c_str(), &peer.sin_addr) != 1 ||
         (pin_cert_ && !ParseHashHex(target.cert_hash_hex, expected_hash_)))
     {
         return false;
@@ -554,9 +557,12 @@ void WTClient::ConnectOnLoop(const Target& target)
     peer_sa_            = sockaddr_in{};
     peer_sa_.sin_family = AF_INET;
     peer_sa_.sin_port   = htons(target.port);
-    if (inet_pton(AF_INET, target.host.c_str(), &peer_sa_.sin_addr) != 1)
+    // Same dial/name split as Connect: resolved IP into the socket, the
+    // typed name into SNI (lsquic_engine_connect below).
+    const std::string& dial = target.resolved_ip.empty() ? target.host : target.resolved_ip;
+    if (inet_pton(AF_INET, dial.c_str(), &peer_sa_.sin_addr) != 1)
     {
-        ScheduleTeardown("bad target host " + target.host);
+        ScheduleTeardown("bad target dial address " + dial);
         return;
     }
 

@@ -17,6 +17,7 @@
 #include "core/event_loop.h"
 #include "srt.h"
 #include "srt_session/publisher.h"
+#include "websrt/resolve.h"
 #include "wt/client.h"
 
 namespace websrt
@@ -74,9 +75,21 @@ public:
 
         srt_startup(); // refcounted; paired with srt_cleanup() in Teardown()
         loop_.Start();
+        // Resolve on the calling thread - see the Subscriber façade: the
+        // blocking DNS wait is the OS resolver's default budget, outside
+        // connect_timeout_ms.
+        std::string resolve_error;
+        target.resolved_ip = ResolveHostToIpv4(config.host, &resolve_error);
+        if (target.resolved_ip.empty())
+        {
+            SetError(resolve_error);
+            start_failed_ = true;
+            Teardown();
+            return kPublishInvalidTarget;
+        }
         if (!client_->Connect(target))
         {
-            SetError("target rejected (host must be an IPv4 literal, port nonzero, path nonempty)");
+            SetError("target rejected (port nonzero, path nonempty, cert hash malformed)");
             start_failed_ = true;
             Teardown();
             return kPublishInvalidTarget;

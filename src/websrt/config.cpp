@@ -4,8 +4,6 @@
 
 #include "websrt/config.hpp"
 
-#include <arpa/inet.h>
-
 #include <string>
 
 namespace websrt
@@ -27,6 +25,16 @@ bool IsStreamNameChar(char c)
            c == '~' || c == '-';
 }
 
+// The host goes verbatim into the TLS SNI and the extended CONNECT
+// :authority, so it may only carry characters a DNS name or an IPv4
+// literal can hold (this also rules out schemes, whitespace, and
+// IPv6 brackets, which the IPv4-only UDP path could not dial anyway).
+bool IsHostChar(char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' ||
+           c == '-';
+}
+
 } // namespace
 
 // The bounds are shared verbatim between SubscriberConfig and
@@ -43,10 +51,19 @@ std::string ValidateCommon(const std::string& host,
                            int                initial_rtt_ms,
                            int                connect_timeout_ms)
 {
-    sockaddr_in probe{};
-    if (host.empty() || inet_pton(AF_INET, host.c_str(), &probe.sin_addr) != 1)
+    // Syntax only: DNS names resolve at Start(), not here (a name that
+    // does not resolve surfaces as a typed Start failure). 253 is the
+    // DNS hostname length bound.
+    if (host.empty() || host.size() > 253)
     {
-        return "host must be an IPv4 address literal (DNS names are not supported yet), got \"" + host + "\"";
+        return "host must be 1..253 characters (IPv4 literal or DNS name), got length " + std::to_string(host.size());
+    }
+    for (const char c : host)
+    {
+        if (!IsHostChar(c))
+        {
+            return std::string("host may only contain A-Z a-z 0-9 . _ - (IPv4 literal or DNS name; found '") + c + "')";
+        }
     }
     if (port == 0)
     {

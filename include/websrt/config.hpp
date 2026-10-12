@@ -18,8 +18,12 @@ namespace websrt
 
 struct SubscriberConfig
 {
-    // Gateway host. Must be an IPv4 address literal for now (e.g.
-    // "127.0.0.1"); DNS resolution is not part of the client yet.
+    // Gateway host: an IPv4 address literal (e.g. "127.0.0.1") or a DNS
+    // name (e.g. "websrt.vyidd.com"). Names are resolved at Start() on
+    // the calling thread - blocking, on the OS resolver's default
+    // timeout budget - via the srt fork's own resolver; the name as
+    // typed (never the resolved IP) is used for TLS SNI and the PKI
+    // certificate name check. IPv4 results only for now.
     std::string host;
 
     // Gateway UDP port (WebTransport). Default: the WebSRT gateway port.
@@ -67,8 +71,8 @@ struct SubscriberConfig
 
 struct PublisherConfig
 {
-    // Gateway host. Must be an IPv4 address literal for now (e.g.
-    // "127.0.0.1"); DNS resolution is not part of the client yet.
+    // Gateway host: an IPv4 address literal or a DNS name, resolved at
+    // Start() (see SubscriberConfig::host).
     std::string host;
 
     // Gateway UDP port (WebTransport). Default: the WebSRT gateway port.

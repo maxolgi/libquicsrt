@@ -77,16 +77,31 @@ target_compile_definitions(websrt PRIVATE
 # define as the M0 loopback harness.
 if(WEBSRT_ENABLE_WT)
     find_package(ZLIB REQUIRED)
+    # deps/srt/apps/apputil.cpp: the fork's CreateAddr (inet_pton fast path
+    # + getaddrinfo), compiled in directly - its apps support library is not
+    # built (ENABLE_APPS OFF) and libsrt does not export a resolver. The
+    # file is the fork's own, compiled read-only; MPL-2.0. The fork's build
+    # defines SRT_VERSION globally (its CMakeLists line ~848); mirror that
+    # for the one PrintLibVersion() use from the generated version.h.
+    file(STRINGS "${CMAKE_BINARY_DIR}/deps/srt/version.h" srt_version_string_line
+         REGEX "^#define SRT_VERSION_STRING ")
+    string(REGEX REPLACE "^#define SRT_VERSION_STRING \"(.*)\"$" "\\1"
+           srt_version_string "${srt_version_string_line}")
+    set_source_files_properties(deps/srt/apps/apputil.cpp PROPERTIES
+        COMPILE_DEFINITIONS SRT_VERSION="${srt_version_string}")
     target_sources(websrt PRIVATE
         src/wt/client.cpp
         src/srt_session/subscriber.cpp
         src/srt_session/publisher.cpp
         src/websrt/config.cpp
+        src/websrt/resolve.cpp
+        deps/srt/apps/apputil.cpp
         src/websrt/subscriber.cpp
         src/websrt/publisher.cpp
         src/websrt/websrt_c.cpp)
     target_include_directories(websrt PRIVATE
         deps/srt/srtcore
+        deps/srt/apps
         ${CMAKE_BINARY_DIR}/deps/srt
         deps/lsquic/include
         ${WEBSRT_BORINGSSL_DIR}/include)
