@@ -82,7 +82,8 @@ if(WEBSRT_ENABLE_WT)
         src/srt_session/subscriber.cpp
         src/srt_session/publisher.cpp
         src/websrt/config.cpp
-        src/websrt/subscriber.cpp)
+        src/websrt/subscriber.cpp
+        src/websrt/publisher.cpp)
     target_include_directories(websrt PRIVATE
         deps/srt/srtcore
         ${CMAKE_BINARY_DIR}/deps/srt
@@ -151,6 +152,30 @@ if(WEBSRT_ENABLE_WT)
         WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js")
     add_test(NAME subscriber_test COMMAND subscriber_test)
     set_tests_properties(subscriber_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+    # publisher_test: libwebsrt Publisher surface - config validation
+    # matrix, TsChunker units, and offline misuse always run; the live
+    # gate (feed fixtures/test.ts through the gateway, byte-for-byte
+    # in-process subscriber dump, first-wins 403 challenger, name freed
+    # after End) needs the Rust gateway oracle and skips the same way.
+    # Links the internal TsChunker too (src/ include), which doubles as
+    # the session-layer coverage.
+    add_executable(publisher_test tests/publisher_test.cpp)
+    target_compile_features(publisher_test PRIVATE cxx_std_20)
+    set_target_properties(publisher_test PROPERTIES CXX_EXTENSIONS OFF)
+    target_include_directories(publisher_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        deps/srt/srtcore
+        ${CMAKE_BINARY_DIR}/deps/srt
+        deps/lsquic/include
+        ${WEBSRT_BORINGSSL_DIR}/include)
+    target_link_libraries(publisher_test PRIVATE websrt_warnings websrt Threads::Threads)
+    target_compile_definitions(publisher_test PRIVATE
+        SRT_ENABLE_VIRTUAL_TRANSPORT
+        WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js"
+        WEBSRT_FIXTURE_TS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/fixtures/test.ts")
+    add_test(NAME publisher_test COMMAND publisher_test)
+    set_tests_properties(publisher_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
     # websrt-dump: the P1 interop app - subscribe with the public API and
     # write the stream's TS bytes to a file (driven by scripts/interop.sh).

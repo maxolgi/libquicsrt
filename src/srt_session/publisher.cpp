@@ -27,6 +27,11 @@ constexpr int kBytesPerPacket = 1500 - 28;
 // Poll slice for the End() ACK-drain wait.
 constexpr int kDrainSliceMs = 10;
 
+// Extra wait past one TSBPD latency before the End() shutdown, so the
+// gateway's receiver has released (and the ring drained) everything the
+// latency window still withheld when the ACK drain completed.
+constexpr int kEndReleaseMarginMs = 250;
+
 // The reasons WTClient reports for a deliberately or peer-initiated clean
 // end; everything else (TLS failure, non-200 CONNECT, socket errors) is an
 // error from the publisher's point of view. Same set as the subscriber.
@@ -201,15 +206,33 @@ void PublisherSession::AcceptThread(SRTSOCKET listener)
 
         // The handshake negotiates min(gateway, listener) payload: the
         // chunker must frame to the negotiated size, not the configured
-        // one (M0's negotiated-payload readback).
-        int negotiated = params_.payload_size;
-        int optlen     = static_cast<int>(sizeof negotiated);
-        if (srt_getsockopt(accepted, 0, SRTO_PAYLOADSIZE, &negotiated, &optlen) == SRT_ERROR ||
-            negotiated < kTsPacketSize)
+        // one (M0's negotiated-payload readback). Two readbacks matter:
+        //   - SRTO_PAYLOADSIZE reports the EXPECTED size (the configured
+        //     value), not the effective cap;
+        //   - the real cap is MSS - 44 (UDP+IP+SRT data headers), and
+        //     the Rust initiator (srt_sender.rs) fills the HSv5 MTU
+        //     field with its payload size (1128) although srt-protocol
+        //     documents that field as "including UDP/IP headers" - so
+        //     the fork's min() negotiation lands MSS at 1128 and the
+        //     effective cap at 1084. Flooring the cap to whole TS
+        //     packets (940 = 5 x 188) keeps the framing 188-aligned.
+        int payload = params_.payload_size;
+        int optlen  = static_cast<int>(sizeof payload);
+        if (srt_getsockopt(accepted, 0, SRTO_PAYLOADSIZE, &payload, &optlen) == SRT_ERROR || payload < kTsPacketSize)
         {
-            negotiated = params_.payload_size;
+            payload = params_.payload_size;
         }
-        chunker_  = TsChunker(negotiated);
+        int mss = 1500;
+        optlen  = static_cast<int>(sizeof mss);
+        if (srt_getsockopt(accepted, 0, SRTO_MSS, &mss, &optlen) != SRT_ERROR)
+        {
+            const int cap = mss - (28 + 16);
+            if (cap >= kTsPacketSize)
+            {
+                payload = std::min(payload, cap / kTsPacketSize * kTsPacketSize);
+            }
+        }
+        chunker_  = TsChunker(payload);
         accepted_ = accepted;
         state_    = State::kConnected;
     }
@@ -413,7 +436,7 @@ int PublisherSession::SendOne(const std::uint8_t* buf, int len, int timeout_ms)
     // One live message. SRTO_SNDTIMEO bounds the blocking part (a full
     // send buffer); Finalize's socket close wakes an in-flight send with
     // SRT_ECONNLOST, so Stop stays prompt without send slicing.
-    timeout_ms = std::max(timeout_ms, 1);
+    timeout_ms     = std::max(timeout_ms, 1);
     SRTSOCKET sock = SRT_INVALID_SOCK;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -622,6 +645,17 @@ bool PublisherSession::End(int timeout_ms)
             close_reason_ = "End: send buffer did not drain in time";
         }
         return false;
+    }
+
+    // (2b) Let the gateway's receive-side TSBPD release the ACKed window
+    // at its natural deadlines before the shutdown flushes whatever it
+    // still withholds: a full-latency flush arrives as one burst that
+    // both overflow-drops in the gateway's publish channel and stacks
+    // the tail into the viewer-close window. Waiting just over one
+    // latency turns the shutdown's own drain into a no-op.
+    {
+        const int release_ms = params_.tsbpd_latency_ms + kEndReleaseMarginMs;
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::min(release_ms, std::max(remaining(), 0))));
     }
 
     // (3) Close the accepted socket while the WT session is still open:

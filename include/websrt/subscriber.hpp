@@ -52,12 +52,8 @@ enum StartStatus
     kStartInternal,       // unexpected library-internal failure
 };
 
-// Outcome of Subscriber::Stats().
-enum StatsStatus
-{
-    kStatsOk = 0,       // out filled
-    kStatsNotConnected, // no live SRT connection (not started / ended); out zeroed
-};
+// Outcome of Subscriber::Stats() lives in websrt/stats.hpp (shared with
+// the Publisher).
 
 // Return values of Subscriber::Read(). Positive values are the number of
 // bytes delivered into the caller's buffer (one SRT message - a

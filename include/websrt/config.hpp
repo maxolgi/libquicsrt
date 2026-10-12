@@ -1,10 +1,11 @@
-// Subscriber configuration (libwebsrt public API).
+// Session configuration (libwebsrt public API).
 //
-// A SubscriberConfig describes one subscribe session: which gateway to
-// talk to, which stream to view, and the SRT/WT parameters the session
-// negotiates. Fields are plain values; validate() checks every bound
-// before the session starts, the way WebSRT's Rust SrtConfig::validate
-// does (descriptive message per violated constraint, first failure wins).
+// SubscriberConfig and PublisherConfig describe one subscribe / publish
+// session: which gateway to talk to, which stream, and the SRT/WT
+// parameters the session negotiates. Fields are plain values; validate()
+// checks every bound before the session starts, the way WebSRT's Rust
+// SrtConfig::validate does (descriptive message per violated constraint,
+// first failure wins).
 
 #ifndef WEBSRT_CONFIG_HPP
 #define WEBSRT_CONFIG_HPP
@@ -61,6 +62,56 @@ struct SubscriberConfig
     // Returns the empty string when every field is within its bounds;
     // otherwise a human-readable description of the first violated
     // constraint (e.g. "port must be in 1..65535, got 0").
+    std::string validate() const;
+};
+
+struct PublisherConfig
+{
+    // Gateway host. Must be an IPv4 address literal for now (e.g.
+    // "127.0.0.1"); DNS resolution is not part of the client yet.
+    std::string host;
+
+    // Gateway UDP port (WebTransport). Default: the WebSRT gateway port.
+    std::uint16_t port = 443;
+
+    // Stream name to publish; becomes the /wt?publish=<name> query. May
+    // only contain the unreserved characters A-Z a-z 0-9 . _ ~ - (it is
+    // placed verbatim into the request path). Occupancy is first-wins:
+    // the gateway answers HTTP 403 while a live source (WT publisher or
+    // UDP ingest) holds the name, and Start surfaces kPublishRejected.
+    std::string stream_name;
+
+    // Expected SHA-256 of the gateway certificate's DER encoding, as 64
+    // hex characters (upper or lower case). Empty string means normal PKI
+    // validation of the gateway certificate instead of pinning.
+    std::string cert_sha256_hex;
+
+    // TSBPD (timestamp-based packet delivery) latency in milliseconds.
+    // The effective delivery delay is max(sender, receiver) latency, so
+    // this is a floor the receiver may raise. Default: 120 (the browser
+    // publisher's srt-wasm default).
+    int tsbpd_latency_ms = 120;
+
+    // SRT payload size in bytes. The handshake negotiates
+    // min(gateway, client) and the Write chunker frames to the negotiated
+    // size, so this only caps it. The WebSRT constant is 1128
+    // (6 x 188-byte MPEG-TS packets). Default: 1128.
+    int payload_size = 1128;
+
+    // Initial RTT estimate in milliseconds seeding SRT's retransmission
+    // timers before the first live sample: 0 = derive it automatically
+    // from the QUIC connection's smoothed RTT once measured; otherwise it
+    // must fit the option's 1..30000 range and overrides the seed.
+    int initial_rtt_ms = 0;
+
+    // How long Start() may wait for the WebTransport session AND the SRT
+    // handshake to complete before giving up (the session is torn down).
+    // Default: 10000.
+    int connect_timeout_ms = 10000;
+
+    // Returns the empty string when every field is within its bounds;
+    // otherwise a human-readable description of the first violated
+    // constraint. The bounds match SubscriberConfig's.
     std::string validate() const;
 };
 

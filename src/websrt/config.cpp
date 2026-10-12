@@ -1,6 +1,6 @@
-// SubscriberConfig::validate (libwebsrt public API): every field's
-// bounds, descriptive message on the first violation - the same
-// discipline as WebSRT's Rust SrtConfig::validate.
+// SubscriberConfig / PublisherConfig validate (libwebsrt public API):
+// every field's bounds, descriptive message on the first violation -
+// the same discipline as WebSRT's Rust SrtConfig::validate.
 
 #include "websrt/config.hpp"
 
@@ -29,7 +29,19 @@ bool IsStreamNameChar(char c)
 
 } // namespace
 
-std::string SubscriberConfig::validate() const
+// The bounds are shared verbatim between SubscriberConfig and
+// PublisherConfig (the same gateway-side SrtConfig discipline either
+// way), so one checker serves both.
+namespace
+{
+std::string ValidateCommon(const std::string& host,
+                           std::uint16_t      port,
+                           const std::string& stream_name,
+                           const std::string& cert_sha256_hex,
+                           int                tsbpd_latency_ms,
+                           int                payload_size,
+                           int                initial_rtt_ms,
+                           int                connect_timeout_ms)
 {
     sockaddr_in probe{};
     if (host.empty() || inet_pton(AF_INET, host.c_str(), &probe.sin_addr) != 1)
@@ -87,6 +99,19 @@ std::string SubscriberConfig::validate() const
         return "connect_timeout_ms must be in 100..600000, got " + std::to_string(connect_timeout_ms);
     }
     return {};
+}
+} // namespace
+
+std::string SubscriberConfig::validate() const
+{
+    return ValidateCommon(
+        host, port, stream_name, cert_sha256_hex, tsbpd_latency_ms, payload_size, initial_rtt_ms, connect_timeout_ms);
+}
+
+std::string PublisherConfig::validate() const
+{
+    return ValidateCommon(
+        host, port, stream_name, cert_sha256_hex, tsbpd_latency_ms, payload_size, initial_rtt_ms, connect_timeout_ms);
 }
 
 } // namespace websrt

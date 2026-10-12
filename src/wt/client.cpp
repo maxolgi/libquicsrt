@@ -208,6 +208,18 @@ struct WtClientCallbacks
         if (status == LSQ_HSK_OK || status == LSQ_HSK_RESUMED_OK)
         {
             Log("handshake complete (hsk_status=%d); ALPN h3 implied by LSENG_HTTP engine", static_cast<int>(status));
+            // Pin the minimum datagram-write size: with the default 0,
+            // lsquic may call on_dg_write with only the leftover space of
+            // a nearly-full packet (pf_gen_datagram_frame passes
+            // MIN(avail, max)), which is not a transport ceiling - large
+            // queued datagrams (SRT data packets) must wait for the next
+            // fresh packet instead of being dropped. WebSRT requires
+            // >= 1200-byte WT datagram support, so kMaxDatagramSize
+            // always fits the peer's advertised frame maximum.
+            if (lsquic_conn_set_min_datagram_size(conn, WTClient::kMaxDatagramSize) != 0)
+            {
+                Log("could not pin min datagram size %zu; large datagrams may drop", WTClient::kMaxDatagramSize);
+            }
             lsquic_conn_make_stream(conn);
         }
         else

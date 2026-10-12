@@ -24,11 +24,16 @@
 //
 // Write path: the app thread hands over arbitrary-size buffers; TsChunker
 // (below) frames them into <= payload-size, 188-aligned live messages and
-// srt_sendmsg2 queues each into the send buffer. Backpressure is SRT's
-// own: a full send buffer blocks the send until SRTO_SNDTIMEO (bounded
-// by the Write budget), and the WT send callback never blocks - a full
-// datagram queue surfaces as a failed VtSend, i.e. UDP-like loss that
-// SRT retransmits.
+// srt_sendmsg2 queues each into the send buffer. The payload used is the
+// NEGOTIATED one (read back after accept): the Rust initiator fills the
+// HSv5 MTU field with its payload size (1128) although srt-protocol
+// documents the field as "including UDP/IP headers", so the fork's
+// min() MSS negotiation caps the effective payload at 1084 - floored to
+// 940 = 5 x 188 (byte-exactness is unaffected; only the message framing
+// narrows). Backpressure is SRT's own: a full send buffer blocks the
+// send until SRTO_SNDTIMEO (bounded by the Write budget), and the WT
+// send callback never blocks - a full datagram queue surfaces as a
+// failed VtSend, i.e. UDP-like loss that SRT retransmits.
 //
 // PACED-WRITE CAVEAT (the M0 lesson): an unthrottled blast fills the
 // send buffer and the WT datagram queue faster than ACKs and the ~2 ms
