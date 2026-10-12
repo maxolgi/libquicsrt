@@ -150,4 +150,11 @@ if(WEBSRT_ENABLE_WT)
         WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js")
     add_test(NAME subscriber_test COMMAND subscriber_test)
     set_tests_properties(subscriber_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+    # websrt-dump: the P1 interop app - subscribe with the public API and
+    # write the stream's TS bytes to a file (driven by scripts/interop.sh).
+    add_executable(websrt-dump apps/websrt-dump.cpp)
+    target_compile_features(websrt-dump PRIVATE cxx_std_20)
+    set_target_properties(websrt-dump PROPERTIES CXX_EXTENSIONS OFF)
+    target_link_libraries(websrt-dump PRIVATE websrt_warnings websrt)
 endif()
