@@ -170,7 +170,7 @@ set_tests_properties(event_loop_test PROPERTIES TIMEOUT 30)
 add_executable(loopback_srt tests/loopback_srt.cpp)
 target_compile_features(loopback_srt PRIVATE cxx_std_20)
 set_target_properties(loopback_srt PROPERTIES CXX_EXTENSIONS OFF)
-target_include_directories(loopback_srt PRIVATE deps/srt/srtcore ${CMAKE_BINARY_DIR}/deps/srt)
+target_include_directories(loopback_srt PRIVATE deps/srt/srtcore ${CMAKE_CURRENT_BINARY_DIR}/deps/srt)
 target_compile_definitions(loopback_srt PRIVATE SRT_ENABLE_VIRTUAL_TRANSPORT)
 target_link_libraries(loopback_srt PRIVATE websrt_warnings Threads::Threads srt_static)
 add_test(NAME loopback_srt COMMAND loopback_srt)
@@ -228,7 +228,7 @@ if(WEBSRT_ENABLE_WT)
     target_include_directories(publisher_test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         deps/srt/srtcore
-        ${CMAKE_BINARY_DIR}/deps/srt
+        ${CMAKE_CURRENT_BINARY_DIR}/deps/srt
         deps/lsquic/include
         ${WEBSRT_BORINGSSL_DIR}/include)
     target_link_libraries(publisher_test PRIVATE websrt_warnings websrt Threads::Threads)
