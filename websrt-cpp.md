@@ -91,7 +91,7 @@ plan for the implementation sessions. Companion repos: `WebSRT` (Rust, unmodifie
 | 3 | `SRTO_SKIP_INDUCTION` caller: Conclusion-first, cookie = 0 | `core.cpp`, `handshake.cpp` |
 | 4 | Listener accepts Conclusion-first | `queue.cpp` (`processConnectRequest`) |
 | 5 | `SRTO_INITIAL_RTT`: seed RTT estimator from QUIC stats | `core.cpp`, api options |
-| 6 | Verify sender too-late retransmit skip exists upstream; add if missing | `core.cpp` |
+| 6 | Verified present upstream — no patch needed: v1.5.7 ships the too-late retransmit skip as buffer state (`sndDropTooLate` in `sendmsg2` drops late data from `CSndBuffer` and purges the send loss list; a LOSSREPORT for an already-dropped seq is answered `DROPREQ`, no rexmit), equivalent-in-effect to the Rust fork's per-rexmit deadline arithmetic for a continuously-sending live publisher; receiver-side drop (`rcvDropTooLateUpTo`) completes the contract; gate-ON test added (`test_virtual_transport.cpp`) | `core.cpp` (upstream) |
 
 Note: most of WebSRT's 12 srt-rs fork patches fixed srt-rs-specific bugs (stats never
 populated, SeqNumber underflow panics, `Sub<TimeSpan>` copy-paste). The reference

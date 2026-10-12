@@ -113,7 +113,8 @@ git will clobber it). Pin policy: **releases only, never upstream master**
 (FFmpeg-supported line, fewer rebase surprises). Upgrades = fetch the new
 release tag from Haivision upstream, rebase `websrt` onto it, re-verify the
 gate-OFF build, then bump the submodule pin. Six config-gated patches (upstream
-UDP behavior unchanged; see `websrt-cpp.md` §"srt fork — patch list"):
+UDP behavior unchanged; see `websrt-cpp.md` §"srt fork — patch list") — five
+code patches plus one verified-upstream no-op:
 
 1. Virtual transport seam behind `CChannel` (sendto→callback, eventfd wake
    replaces `select()`-on-UDP)
@@ -121,7 +122,9 @@ UDP behavior unchanged; see `websrt-cpp.md` §"srt fork — patch list"):
 3. `SRTO_SKIP_INDUCTION` caller (Conclusion-first, cookie=0)
 4. Listener accepts Conclusion-first (`processConnectRequest`)
 5. `SRTO_INITIAL_RTT` (seed RTT estimator from QUIC stats)
-6. Sender too-late retransmit skip (verify upstream has it; add if missing)
+6. Sender too-late retransmit skip — verified present in upstream v1.5.7
+   (buffer-state: `sndDropTooLate` purges loss list; dropped-seq NAK →
+   DROPREQ); no patch needed, gate-ON test added
 
 Work in `~/srt`, commit, ask the human to push, then bump the submodule pin in
 websrt-cpp. Keep patches minimal and upstreamable in spirit (MPL-2.0).
