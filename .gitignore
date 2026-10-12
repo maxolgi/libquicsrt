@@ -15,3 +15,6 @@ compile_commands.json
 # Object/archive files outside build dirs
 *.o
 *.a
+
+# Fetched upstream FFmpeg checkout (patch applied by ./build.sh ffmpeg)
+deps/ffmpeg/

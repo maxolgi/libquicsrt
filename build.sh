@@ -11,6 +11,7 @@ Commands:
     test       Run tests via ctest (release)
     gateway    Build the C++ gateway binary
     ffmpeg     Build patched upstream FFmpeg with the websrt protocol
+    ffmpeg-gate Run the P2 golden-commands gate (needs the Rust gateway + ffmpeg)
     interop    Run interop tests against the Rust gateway
     restart    Restart the gateway (supervisord, production only)
 
@@ -30,6 +31,13 @@ not_implemented() {
 # the revision lsquic CI builds against).
 BORINGSSL_COMMIT=e20e8486554098772673b55ea76bb003d0b330e5
 
+# Pinned upstream FFmpeg release: newest n7.1.x tag (release line, per
+# the fork pin policy - never master). deps/ffmpeg is fetched (not a
+# submodule, gitignored) and the committed patch from examples/ffmpeg/
+# is applied on top.
+FFMPEG_TAG=n7.1.5
+FFMPEG_COMMIT=3a0867c2bfda4a4d4309ca1a8cbdc6175e67f587
+
 # deps/boringssl is fetched (not a submodule, gitignored) and built
 # out-of-source; idempotent: no-op clone when the pin matches, fetch+checkout
 # otherwise, incremental rebuild when already built.
@@ -45,6 +53,65 @@ setup_boringssl() {
         -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
     cmake --build deps/boringssl/build -j "$(nproc)"
 }
+
+# Patched upstream FFmpeg with the websrt:// protocol (examples/ffmpeg/).
+# deps/ffmpeg is fetched (gitignored) at the pinned release tag, the
+# committed patch applied, and ffmpeg + ffprobe built against the local
+# libwebsrt via a generated pkg-config file. Idempotent: skips the clone
+# when the pin matches, the apply when the tree is already patched, and
+# the compile is incremental.
+build_ffmpeg() {
+    local patch="examples/ffmpeg/0001-avformat-add-websrt-protocol.patch"
+    local repo_dir="$PWD"
+
+    [ -f build/release/libwebsrt.a ] || {
+        echo "build.sh: ffmpeg: libwebsrt not built (run ./build.sh setup && ./build.sh lib)" >&2
+        exit 1
+    }
+    [ -f deps/boringssl/build/libssl.a ] || {
+        echo "build.sh: ffmpeg: BoringSSL not built (run ./build.sh setup with WEBSRT_ENABLE_WT=ON)" >&2
+        exit 1
+    }
+
+    if [ ! -d deps/ffmpeg/.git ]; then
+        git clone --branch "$FFMPEG_TAG" --depth 1 \
+            https://github.com/FFmpeg/ffmpeg.git deps/ffmpeg
+    fi
+    if [ "$(git -C deps/ffmpeg rev-parse HEAD)" != "$FFMPEG_COMMIT" ]; then
+        git -C deps/ffmpeg fetch origin tag "$FFMPEG_TAG" --depth 1 --force
+        git -C deps/ffmpeg checkout -f "$FFMPEG_COMMIT"
+    fi
+
+    if [ ! -f deps/ffmpeg/libavformat/websrtproto.c ]; then
+        git -C deps/ffmpeg apply "$repo_dir/$patch"
+    fi
+
+    # libx264 for the golden output command (install when missing).
+    if ! pkg-config --exists x264; then
+        echo "build.sh: ffmpeg: installing libx264-dev..."
+        sudo apt-get install -y libx264-dev || {
+            echo "build.sh: ffmpeg: libx264-dev unavailable; the golden gate cannot run" >&2
+            exit 1
+        }
+    fi
+
+    # pkg-config shim over the static libwebsrt link line. Regenerated
+    # every run (paths are absolute, the tree may have moved).
+    cat > build/release/websrt.pc <<EOF_PC_
+prefix=$repo_dir
+Name: websrt
+Description: WebSRT client library (SRT over WebTransport), static
+Version: 0.1.0
+Cflags: -I\${prefix}/include
+Libs: -L\${prefix}/build/release -L\${prefix}/build/release/deps/lsquic/src/liblsquic -L\${prefix}/deps/boringssl/build -lwebsrt -lsrt -llsquic -lssl -lcrypto -lz -lpthread -lstdc++ -lm
+EOF_PC_
+
+    (cd deps/ffmpeg && PKG_CONFIG_PATH="$repo_dir/build/release" ./configure \
+        --enable-gpl --enable-libx264 --enable-libwebsrt)
+    make -C deps/ffmpeg -j "$(nproc)" ffmpeg ffprobe
+    echo "build.sh: ffmpeg: binaries at deps/ffmpeg/ffmpeg and deps/ffmpeg/ffprobe"
+}
+
 
 case "${1:-}" in
     setup)
@@ -62,8 +129,14 @@ case "${1:-}" in
     test)
         ctest --preset release
         ;;
-    gateway | ffmpeg | restart)
+    gateway | restart)
         not_implemented "$1"
+        ;;
+    ffmpeg)
+        build_ffmpeg
+        ;;
+    ffmpeg-gate)
+        exec scripts/ffmpeg_gate.sh
         ;;
     interop)
         exec scripts/interop.sh
