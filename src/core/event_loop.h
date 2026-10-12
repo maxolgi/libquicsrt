@@ -83,6 +83,9 @@ public:
 
     [[nodiscard]] bool OnLoopThread() const;
 
+    // Whether the loop thread is running (thread-safe).
+    [[nodiscard]] bool IsRunning() const;
+
     // Registers interest in `events` (level-triggered epoll bits) on `fd`;
     // `cb` fires with the active event bits. The caller owns the fd: DelFd
     // only deregisters, it never closes.

@@ -70,6 +70,18 @@ target_compile_definitions(websrt PRIVATE
     WEBSRT_VERSION_PATCH=${PROJECT_VERSION_PATCH}
     WEBSRT_VERSION_STRING="${PROJECT_VERSION}")
 
+# WebTransport client: the lsquic engine host (src/wt). Carries the
+# lsquic/BoringSSL/ZLIB link line so consumers of websrt need none of it.
+if(WEBSRT_ENABLE_WT)
+    find_package(ZLIB REQUIRED)
+    target_sources(websrt PRIVATE src/wt/client.cpp)
+    target_include_directories(websrt PRIVATE
+        deps/lsquic/include
+        ${WEBSRT_BORINGSSL_DIR}/include)
+    target_link_libraries(websrt PRIVATE lsquic ZLIB::ZLIB
+        ${WEBSRT_BORINGSSL_BUILD}/libssl.a ${WEBSRT_BORINGSSL_BUILD}/libcrypto.a)
+endif()
+
 enable_testing()
 
 add_executable(smoke_test tests/smoke_test.cpp)

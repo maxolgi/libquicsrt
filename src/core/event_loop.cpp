@@ -101,6 +101,11 @@ bool EventLoop::OnLoopThread() const
     return thread_.joinable() && thread_.get_id() == std::this_thread::get_id();
 }
 
+bool EventLoop::IsRunning() const
+{
+    return running_.load(std::memory_order_acquire);
+}
+
 void EventLoop::AddFd(int fd, std::uint32_t events, FdCallback cb)
 {
     AssertLoopThread();
