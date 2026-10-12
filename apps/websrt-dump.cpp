@@ -385,6 +385,26 @@ int main(int argc, char** argv)
     int                     exit_code = kExitOk;
     std::string             error;
 
+    // One periodic stats line per interval, sampled on wall clock from
+    // both data and timeout Read results: data may flow for minutes
+    // without a single timeout, and the totals are unreadable after the
+    // connection ends, so the final line needs a live snapshot kept.
+    auto maybe_stats = [&]
+    {
+        if (quiet || stats_iv_s <= 0 ||
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - last_stats).count() < stats_iv_s)
+        {
+            return;
+        }
+        websrt::SubscriberStats s;
+        if (sub->Stats(&s) == websrt::kStatsOk)
+        {
+            last = s;
+        }
+        PrintStats("stats", SecondsSince(started), wrote_bytes, wrote_pkts, last);
+        last_stats = std::chrono::steady_clock::now();
+    };
+
     std::vector<char> buf(cfg.payload_size);
     for (;;)
     {
@@ -410,22 +430,12 @@ int main(int argc, char** argv)
             }
             wrote_bytes += n;
             ++wrote_pkts;
+            maybe_stats();
             continue;
         }
-        const double now_s = SecondsSince(started);
         if (n == websrt::kReadTimeout)
         {
-            if (!quiet && stats_iv_s > 0 &&
-                std::chrono::duration<double>(std::chrono::steady_clock::now() - last_stats).count() >= stats_iv_s)
-            {
-                websrt::SubscriberStats s;
-                if (sub->Stats(&s) == websrt::kStatsOk)
-                {
-                    last = s;
-                }
-                PrintStats("stats", now_s, wrote_bytes, wrote_pkts, last);
-                last_stats = std::chrono::steady_clock::now();
-            }
+            maybe_stats();
             continue;
         }
         if (n == websrt::kReadEnd)
