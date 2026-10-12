@@ -7,12 +7,17 @@ Usage: ./build.sh <command>
 
 Commands:
     setup      One-time: submodule init, BoringSSL fetch+build, CMake configure (release)
-    lib        Build libwebsrt (+ libsrt)
+    lib        Build libwebsrt (+ libsrt, lsquic)
     test       Run tests via ctest (release)
     gateway    Build the C++ gateway binary
     ffmpeg     Build patched upstream FFmpeg with the websrt protocol
     interop    Run interop tests against the Rust gateway
     restart    Restart the gateway (supervisord, production only)
+
+Environment:
+    WEBSRT_ENABLE_WT=OFF  setup without WebTransport: skips BoringSSL and
+                          configures CMake with -DWEBSRT_ENABLE_WT=OFF
+                          (M0/CI fast path, no lsquic either)
 EOF
 }
 
@@ -43,9 +48,13 @@ setup_boringssl() {
 
 case "${1:-}" in
     setup)
-        git submodule update --init
-        setup_boringssl
-        cmake --preset release
+        # lsquic declares the ls-qpack and ls-hpack submodules, so --recursive
+        git submodule update --init --recursive
+        wt="${WEBSRT_ENABLE_WT:-ON}"
+        if [ "$wt" = "ON" ]; then
+            setup_boringssl
+        fi
+        cmake --preset release -DWEBSRT_ENABLE_WT="$wt"
         ;;
     lib)
         cmake --build --preset release
