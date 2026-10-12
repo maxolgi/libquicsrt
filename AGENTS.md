@@ -93,7 +93,7 @@ their own settings), BoringSSL via lsquic's `LIBSSL_DIR`, nasm.
 
 ## Critical build order
 
-1. Forked `srt` (`~/srt`, pushes to `maxolgi/srt`) changes → commit there, human
+1. Forked `srt` (`~/maxolgi/srt`, pushes to `maxolgi/srt`) changes → commit there, human
    pushes, then bump the pin: `git -C deps/srt fetch && git -C deps/srt checkout <commit>`
    followed by `./build.sh setup && ./build.sh lib`. Submodule commits in
    websrt-cpp are the equivalent of WebSRT's Cargo.lock pinning — new fork
@@ -108,7 +108,7 @@ their own settings), BoringSSL via lsquic's `LIBSSL_DIR`, nasm.
 **`maxolgi/srt`** (branch: **`websrt`**, cut from upstream **release tag
 `v1.5.7`** — commit `899348d8318eb9a3c5a5b6ec43c4a1114288773a`; the fork's
 `master` stays a clean upstream mirror, never committed to directly) — local
-clone `~/srt` (do NOT edit `deps/srt` directly; it is a submodule checkout and
+clone `~/maxolgi/srt` (do NOT edit `deps/srt` directly; it is a submodule checkout and
 git will clobber it). Pin policy: **releases only, never upstream master**
 (FFmpeg-supported line, fewer rebase surprises). Upgrades = fetch the new
 release tag from Haivision upstream, rebase `websrt` onto it, re-verify the
@@ -126,7 +126,7 @@ code patches plus one verified-upstream no-op:
    (buffer-state: `sndDropTooLate` purges loss list; dropped-seq NAK →
    DROPREQ); no patch needed, gate-ON test added
 
-Work in `~/srt`, commit, ask the human to push, then bump the submodule pin in
+Work in `~/maxolgi/srt`, commit, ask the human to push, then bump the submodule pin in
 websrt-cpp. Keep patches minimal and upstreamable in spirit (MPL-2.0).
 
 `lsquic` + BoringSSL are consumed unmodified (submodule/vcpkg). lsquic's WT
@@ -213,7 +213,7 @@ client side hand-drives extended CONNECT via raw `lsxpack` pseudo-headers.
 
 ## Gotchas
 
-- Never edit `deps/srt` in place — it's the submodule checkout. Use `~/srt`.
+- Never edit `deps/srt` in place — it's the submodule checkout. Use `~/maxolgi/srt`.
 - Fork patches must stay **config-gated** so stock UDP behavior is untouched.
 - lsquic engine is single-threaded: all engine calls (packet_in, process_conns,
   send_unsent_packets) happen on the event-loop thread; callbacks fire there too.

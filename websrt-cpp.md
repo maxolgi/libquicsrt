@@ -47,7 +47,7 @@ plan for the implementation sessions. Companion repos: `WebSRT` (Rust, unmodifie
 ```
 
 - **SRT core**: fork `Haivision/srt` → `github.com/maxolgi/srt`, consumed as a git
-  submodule pointing at the fork. Local clone `~/srt`, branch `websrt` cut from
+  submodule pointing at the fork. Local clone `~/maxolgi/srt`, branch `websrt` cut from
   upstream **release tag `v1.5.7`** (commit `899348d8`) — **pin releases only,
   never upstream master** (FFmpeg-supported line, fewer rebase surprises). The
   fork's `master` stays a clean upstream mirror; upgrades rebase `websrt` onto a
@@ -146,7 +146,7 @@ Toolchain: gcc 13, CMake ≥ 3.24, BoringSSL (via lsquic's LIBSSL_DIR), nasm.
 
 ## Phases & gates
 
-- **P0 — Bootstrap + fork seam.** Repo skeleton, submodules, CMake; `~/srt` clone +
+- **P0 — Bootstrap + fork seam.** Repo skeleton, submodules, CMake; `~/maxolgi/srt` clone +
   patches 1–6; loopback test. *Gate: M0 green.*
 - **P1 — Subscribe.** wt-client + subscriber session; `websrt-dump` app.
   *Gates: dump from the live Rust gateway is byte-for-byte identical to the
@@ -195,7 +195,7 @@ run locally where the Rust gateway is available.
 
 1. `git init`, commit this plan, create the skeleton tree, add submodules
    (`maxolgi/srt` fork + lsquic), CMake building an empty lib.
-2. Clone the fork to `~/srt` (branch `websrt` off upstream release tag `v1.5.7`,
+2. Clone the fork to `~/maxolgi/srt` (branch `websrt` off upstream release tag `v1.5.7`,
    commit `899348d8`; fork `master` stays the clean upstream mirror); write the
    AGENTS.md fork-discipline section (mirror WebSRT's).
 3. Patch 1 (virtual transport seam) + patches 3/4 (skip-induction) → M0 loopback test.
