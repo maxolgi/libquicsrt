@@ -53,12 +53,17 @@ if(WEBSRT_ENABLE_WT)
     add_subdirectory(deps/lsquic)
 endif()
 
-add_library(websrt STATIC src/core/version.cpp)
+find_package(Threads REQUIRED)
+
+add_library(websrt STATIC
+    src/core/event_loop.cpp
+    src/core/version.cpp)
 add_library(websrt::websrt ALIAS websrt)
 target_compile_features(websrt PUBLIC cxx_std_20)
 set_target_properties(websrt PROPERTIES CXX_EXTENSIONS OFF)
 target_include_directories(websrt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(websrt PRIVATE websrt_warnings)
+target_include_directories(websrt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(websrt PRIVATE websrt_warnings Threads::Threads)
 target_compile_definitions(websrt PRIVATE
     WEBSRT_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
     WEBSRT_VERSION_MINOR=${PROJECT_VERSION_MINOR}
@@ -73,7 +78,15 @@ set_target_properties(smoke_test PROPERTIES CXX_EXTENSIONS OFF)
 target_link_libraries(smoke_test PRIVATE websrt_warnings websrt)
 add_test(NAME smoke_test COMMAND smoke_test)
 
-find_package(Threads REQUIRED)
+# EventLoop units: post/fd/timer/engine-host mechanics, no WebTransport
+# needed (runs on the WT-off fast path too).
+add_executable(event_loop_test tests/event_loop_test.cpp)
+target_compile_features(event_loop_test PRIVATE cxx_std_20)
+set_target_properties(event_loop_test PROPERTIES CXX_EXTENSIONS OFF)
+target_include_directories(event_loop_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(event_loop_test PRIVATE websrt_warnings websrt Threads::Threads)
+add_test(NAME event_loop_test COMMAND event_loop_test)
+set_tests_properties(event_loop_test PROPERTIES TIMEOUT 30)
 
 # M0 loopback: two forked srt sockets over an in-memory wire pair (gated
 # virtual transport seam, zero OS sockets). The srt CMake uses
