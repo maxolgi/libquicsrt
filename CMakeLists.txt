@@ -72,13 +72,20 @@ target_compile_definitions(websrt PRIVATE
 
 # WebTransport client: the lsquic engine host (src/wt). Carries the
 # lsquic/BoringSSL/ZLIB link line so consumers of websrt need none of it.
+# The srt-session layer (forked srt in virtual-transport mode) rides along:
+# the same include paths and gating define as the M0 loopback harness.
 if(WEBSRT_ENABLE_WT)
     find_package(ZLIB REQUIRED)
-    target_sources(websrt PRIVATE src/wt/client.cpp)
+    target_sources(websrt PRIVATE
+        src/wt/client.cpp
+        src/srt_session/subscriber.cpp)
     target_include_directories(websrt PRIVATE
+        deps/srt/srtcore
+        ${CMAKE_BINARY_DIR}/deps/srt
         deps/lsquic/include
         ${WEBSRT_BORINGSSL_DIR}/include)
-    target_link_libraries(websrt PRIVATE lsquic ZLIB::ZLIB
+    target_compile_definitions(websrt PRIVATE SRT_ENABLE_VIRTUAL_TRANSPORT)
+    target_link_libraries(websrt PRIVATE lsquic ZLIB::ZLIB srt_static
         ${WEBSRT_BORINGSSL_BUILD}/libssl.a ${WEBSRT_BORINGSSL_BUILD}/libcrypto.a)
 endif()
 
