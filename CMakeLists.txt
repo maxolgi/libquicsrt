@@ -80,6 +80,7 @@ if(WEBSRT_ENABLE_WT)
     target_sources(websrt PRIVATE
         src/wt/client.cpp
         src/srt_session/subscriber.cpp
+        src/srt_session/publisher.cpp
         src/websrt/config.cpp
         src/websrt/subscriber.cpp)
     target_include_directories(websrt PRIVATE
