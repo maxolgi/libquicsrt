@@ -112,22 +112,18 @@ target_compile_definitions(loopback_srt PRIVATE SRT_ENABLE_VIRTUAL_TRANSPORT)
 target_link_libraries(loopback_srt PRIVATE websrt_warnings Threads::Threads srt_static)
 add_test(NAME loopback_srt COMMAND loopback_srt)
 
-# wt_echo: hand-driven WebTransport client spike against the live Rust
-# gateway (the interop oracle). Requires the Rust WebSRT checkout and its
-# runtime cert-hash.js; exits 77 (ctest SKIP_RETURN_CODE) when they are
-# absent so CI machines without the Rust world stay green.
+# wt_echo: WebTransport client validation against the live Rust gateway
+# (the interop oracle). Requires the Rust WebSRT checkout and its runtime
+# cert-hash.js; exits 77 (ctest SKIP_RETURN_CODE) when they are absent so CI
+# machines without the Rust world stay green.
 if(WEBSRT_ENABLE_WT)
-    find_package(ZLIB REQUIRED)
     add_executable(wt_echo tests/wt_echo.cpp)
     target_compile_features(wt_echo PRIVATE cxx_std_20)
     set_target_properties(wt_echo PROPERTIES CXX_EXTENSIONS OFF)
-    target_include_directories(wt_echo PRIVATE
-        deps/lsquic/include
-        ${WEBSRT_BORINGSSL_DIR}/include)
+    target_include_directories(wt_echo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(wt_echo PRIVATE websrt_warnings websrt Threads::Threads)
     target_compile_definitions(wt_echo PRIVATE
         WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js")
-    target_link_libraries(wt_echo PRIVATE websrt_warnings lsquic ZLIB::ZLIB
-        ${WEBSRT_BORINGSSL_BUILD}/libssl.a ${WEBSRT_BORINGSSL_BUILD}/libcrypto.a)
     add_test(NAME wt_echo COMMAND wt_echo)
     set_tests_properties(wt_echo PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
 endif()
