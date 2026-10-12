@@ -150,12 +150,32 @@ void TestConfigValidation()
     {
         auto cfg = GoodConfig();
         cfg.host = "localhost";
-        ExpectInvalid(cfg, "host", "DNS-name host");
+        ExpectValid(cfg, "DNS-name host");
+    }
+    {
+        auto cfg = GoodConfig();
+        cfg.host = "websrt.vyidd.com";
+        ExpectValid(cfg, "multi-label DNS-name host");
     }
     {
         auto cfg = GoodConfig();
         cfg.host = "256.9.9.9";
-        ExpectInvalid(cfg, "host", "out-of-range IPv4");
+        ExpectValid(cfg, "out-of-range IPv4 passes syntax as a (dead) DNS name - fails at Start resolution");
+    }
+    {
+        auto cfg = GoodConfig();
+        cfg.host = "host with space";
+        ExpectInvalid(cfg, "host", "whitespace in host");
+    }
+    {
+        auto cfg = GoodConfig();
+        cfg.host = "websrt://gw";
+        ExpectInvalid(cfg, "host", "scheme in host");
+    }
+    {
+        auto cfg = GoodConfig();
+        cfg.host = "::1";
+        ExpectInvalid(cfg, "host", "IPv6 literal host");
     }
     {
         auto cfg = GoodConfig();
@@ -378,6 +398,27 @@ void TestOfflineMisuse()
               "Write after failed Start is kWriteClosed");
         pub.Stop();
         Check([&] { return pub.Write(buf, sizeof buf, 0) == websrt::kWriteClosed; }, "Write stays terminal after Stop");
+    }
+    {
+        // Unresolvable DNS name: typed, bounded Start failure (same
+        // discipline as the Subscriber façade's case).
+        auto cfg               = GoodConfig();
+        cfg.host               = "no-such-host.websrt-cpp.invalid";
+        cfg.connect_timeout_ms = 500;
+        const auto        t0   = std::chrono::steady_clock::now();
+        websrt::Publisher pub;
+        const auto        status = pub.Start(cfg);
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+        Check([&] { return status == websrt::kPublishInvalidTarget; },
+              "unresolvable host must kPublishInvalidTarget (got " + std::to_string(status) + ")");
+        Check([&] { return Contains(pub.LastError(), "resolve"); },
+              "unresolvable host must name the resolution failure (got \"" + pub.LastError() + "\")");
+        Check([&] { return ms.count() < 20000; },
+              "unresolvable host must fail bounded (took " + std::to_string(ms.count()) + " ms)");
+        char buf[1128];
+        Check([&] { return pub.Write(buf, sizeof buf, 0) == websrt::kWriteClosed; },
+              "Write after resolve failure is kWriteClosed");
+        pub.Stop();
     }
     std::printf("offline misuse: complete (%d checks so far)\n", g_checks);
 }

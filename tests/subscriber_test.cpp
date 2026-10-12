@@ -145,17 +145,52 @@ void TestConfigValidation()
     {
         auto cfg = GoodConfig();
         cfg.host = "localhost";
-        ExpectInvalid(cfg, "host", "DNS-name host");
+        ExpectValid(cfg, "DNS-name host");
+    }
+    {
+        auto cfg = GoodConfig();
+        cfg.host = "websrt.vyidd.com";
+        ExpectValid(cfg, "multi-label DNS-name host");
     }
     {
         auto cfg = GoodConfig();
         cfg.host = "1.2.3.4.5";
-        ExpectInvalid(cfg, "host", "malformed IPv4");
+        ExpectValid(cfg, "malformed IPv4 passes syntax as a (dead) DNS name - fails at Start resolution");
     }
     {
         auto cfg = GoodConfig();
         cfg.host = "256.1.1.1";
-        ExpectInvalid(cfg, "host", "out-of-range IPv4");
+        ExpectValid(cfg, "out-of-range IPv4 passes syntax as a (dead) DNS name - fails at Start resolution");
+    }
+    {
+        auto cfg = GoodConfig();
+        cfg.host = "host with space";
+        ExpectInvalid(cfg, "host", "whitespace in host");
+    }
+    {
+        auto cfg = GoodConfig();
+        cfg.host = "websrt://gw";
+        ExpectInvalid(cfg, "host", "scheme in host");
+    }
+    {
+        auto cfg = GoodConfig();
+        cfg.host = "gw:4433";
+        ExpectInvalid(cfg, "host", "colon (port syntax) in host");
+    }
+    {
+        auto cfg = GoodConfig();
+        cfg.host = "::1";
+        ExpectInvalid(cfg, "host", "IPv6 literal host");
+    }
+    {
+        auto cfg = GoodConfig();
+        cfg.host = std::string(254, 'a');
+        ExpectInvalid(cfg, "host", "254-character host");
+    }
+    {
+        auto cfg = GoodConfig();
+        cfg.host = std::string(253, 'a');
+        ExpectValid(cfg, "253-character host (DNS length bound)");
     }
     {
         auto cfg = GoodConfig();
@@ -329,6 +364,28 @@ void TestOfflineMisuse()
         Check([&] { return sub.Read(buf, sizeof buf, 0) == websrt::kReadClosed; },
               "Read after failed Start is kReadClosed");
     }
+    {
+        // Unresolvable DNS name: typed, bounded Start failure (the .invalid
+        // TLD is reserved for exactly this; NXDOMAIN latency is the local
+        // resolver's, asserted bounded rather than fast).
+        auto cfg               = GoodConfig();
+        cfg.host               = "no-such-host.websrt-cpp.invalid";
+        cfg.connect_timeout_ms = 500;
+        const auto         t0  = std::chrono::steady_clock::now();
+        websrt::Subscriber sub;
+        const auto         status = sub.Start(cfg);
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+        Check([&] { return status == websrt::kStartInvalidTarget; },
+              "unresolvable host must kStartInvalidTarget (got " + std::to_string(status) + ")");
+        Check([&] { return Contains(sub.LastError(), "resolve"); },
+              "unresolvable host must name the resolution failure (got \"" + sub.LastError() + "\")");
+        Check([&] { return ms.count() < 20000; },
+              "unresolvable host must fail bounded (took " + std::to_string(ms.count()) + " ms)");
+        char buf[1128];
+        Check([&] { return sub.Read(buf, sizeof buf, 0) == websrt::kReadClosed; },
+              "Read after resolve failure is kReadClosed");
+        sub.Stop();
+    }
     std::printf("offline misuse: complete (%d checks so far)\n", g_checks);
 }
 
@@ -489,6 +546,25 @@ void TestLiveNegative()
         // test leaves a healthy gateway behind for whatever runs next.
         std::printf("live negative: cooling down 12 s after the PKI abort\n");
         std::this_thread::sleep_for(std::chrono::seconds(12));
+    }
+
+    // (e) Hostname dial: bare "localhost" with pinning. The TLS handshake
+    // must succeed against the name-resolved gateway (SNI carries the
+    // typed name, the pin still matches the cert), reaching the HTTP 404
+    // for the nonexistent stream - resolution + SNI-with-name + pinning
+    // coexist.
+    {
+        websrt::SubscriberConfig cfg;
+        if (!GatewayTarget(&cfg, "byname"))
+        {
+            std::exit(kSkipExit);
+        }
+        cfg.host               = "localhost";
+        cfg.connect_timeout_ms = 5000;
+        if (StartNegative(cfg) == websrt::kStartTimedOut)
+        {
+            std::exit(kSkipExit);
+        }
     }
 
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);

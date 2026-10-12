@@ -155,6 +155,17 @@ if(WEBSRT_ENABLE_WT)
     add_test(NAME wt_echo COMMAND wt_echo)
     set_tests_properties(wt_echo PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
 
+    # resolve_test: the fork-reused resolver (CreateAddr) behind
+    # ResolveHostToIpv4 - literal fast path, localhost loopback, bounded
+    # NXDOMAIN. No gateway needed.
+    add_executable(resolve_test tests/resolve_test.cpp)
+    target_compile_features(resolve_test PRIVATE cxx_std_20)
+    set_target_properties(resolve_test PROPERTIES CXX_EXTENSIONS OFF)
+    target_include_directories(resolve_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(resolve_test PRIVATE websrt_warnings websrt Threads::Threads)
+    add_test(NAME resolve_test COMMAND resolve_test)
+    set_tests_properties(resolve_test PROPERTIES TIMEOUT 60)
+
     # subscriber_test: libwebsrt public surface - config validation matrix
     # and offline misuse always run; the live negative path (nonexistent
     # stream -> HTTP 404) needs the same Rust gateway oracle and skips the
