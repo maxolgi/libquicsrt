@@ -38,12 +38,14 @@ ffprobe, P2 golden commands 2×.
 
 ## Observations for the WebSRT repo (Rust, separate repo — fix there)
 
-- **Player video decode broken on Chrome 151**: `VideoDecoder.configure()`
-  in the player throws `OperationError: Unsupported configuration`; the canvas
-  stays black (audio decodes, SRT stats clean). Identical against the Rust
-  gateway and the C++ gateway — player-side, not a gateway defect. H.264
-  `isConfigSupported()` is true in that browser, so the configure call needs
-  review (`web/src/decode.ts`).
+- **Player video decode needs software decode on this box**: with the debug
+  panel's Codec tab set to "Prefer Hardware" (VAAPI/NVIDIA present but
+  producing choppy output), `VideoDecoder.configure()` throws
+  `OperationError: Unsupported configuration` and the canvas stays black.
+  Switching to "Prefer Software" in the Codec tab decodes and renders
+  perfectly (verified: 237 frames, 0 dropped, 30 FPS). Not a gateway issue —
+  identical on the Rust gateway. Worth remembering when a stream "won't
+  play" on a machine with VAAPI.
 - Gateway accept-loop stall: ≥3 concurrent WT handshakes within seconds can
   stall the wtransport accept loop 10–20 s (`BrowserSession::create().await`
   / registry insert timing suspected). Sessions attaching during recovery
