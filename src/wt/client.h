@@ -65,8 +65,12 @@ public:
     {
         std::string   host; // IPv4 dotted quad
         std::uint16_t port = 0;
-        std::string   path;          // with query, e.g. "/wt?stream=demo"
-        std::string   cert_hash_hex; // expected SHA-256 of the cert DER, 64 hex chars
+        std::string   path; // with query, e.g. "/wt?stream=demo"
+        // Empty: PKI validation - the certificate chain is verified
+        // against the system CA bundle and the host must match a SAN
+        // (hostname or IP). Non-empty: pinning - exactly 64 hex chars,
+        // the SHA-256 of the certificate DER.
+        std::string cert_hash_hex;
     };
 
     // Largest payload SendDatagram accepts: it must fit next to the context
@@ -134,6 +138,13 @@ private:
     void ConnectOnLoop(const Target& target);
     void EnqueueDatagram(std::vector<std::uint8_t> payload);
     void CloseOnLoop();
+    // Graceful teardown from a live connection: stashes `reason` for the
+    // eventual OnSessionClosed, sends CONNECTION_CLOSE, and lets the
+    // on_conn_closed path run the teardown. Instant ScheduleTeardown is
+    // reserved for engines with no live connection - destroying an engine
+    // with a live connection never tells the peer, leaving it a zombie
+    // until its idle timeout.
+    void CloseGracefully(const std::string& reason);
     // Destroys the engine outside any engine callback; idempotent. `notify`
     // fires OnSessionClosed when this call is what closes the session.
     void    Teardown(const std::string& reason, bool notify);
@@ -154,7 +165,9 @@ private:
     // Target, staged by Connect and consumed on the loop thread.
     std::string   authority_;
     std::string   path_;
+    std::string   peer_host_; // host as given (SNI / PKI name check)
     std::uint8_t  expected_hash_[32] = {};
+    bool          pin_cert_          = false; // false: PKI chain + name validation
     std::uint16_t port_              = 0;
 
     // Transport state: loop thread only (the loop is stopped or the thread
@@ -170,7 +183,8 @@ private:
     bool                      headers_sent_    = false;
     bool                      headers_done_    = false;
     bool                      stream_terminal_ = false;
-    std::vector<std::uint8_t> session_buf_; // response headers remainder + capsules
+    std::string               pending_close_reason_; // CloseGracefully's stashed reason
+    std::vector<std::uint8_t> session_buf_;          // response headers remainder + capsules
 
     std::deque<std::vector<std::uint8_t>> send_queue_;
     std::size_t                           datagram_write_size_ = 0;

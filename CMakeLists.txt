@@ -72,13 +72,16 @@ target_compile_definitions(websrt PRIVATE
 
 # WebTransport client: the lsquic engine host (src/wt). Carries the
 # lsquic/BoringSSL/ZLIB link line so consumers of websrt need none of it.
-# The srt-session layer (forked srt in virtual-transport mode) rides along:
-# the same include paths and gating define as the M0 loopback harness.
+# The srt-session layer (forked srt in virtual-transport mode) and the
+# public Subscriber façade ride along: the same include paths and gating
+# define as the M0 loopback harness.
 if(WEBSRT_ENABLE_WT)
     find_package(ZLIB REQUIRED)
     target_sources(websrt PRIVATE
         src/wt/client.cpp
-        src/srt_session/subscriber.cpp)
+        src/srt_session/subscriber.cpp
+        src/websrt/config.cpp
+        src/websrt/subscriber.cpp)
     target_include_directories(websrt PRIVATE
         deps/srt/srtcore
         ${CMAKE_BINARY_DIR}/deps/srt
@@ -133,4 +136,18 @@ if(WEBSRT_ENABLE_WT)
         WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js")
     add_test(NAME wt_echo COMMAND wt_echo)
     set_tests_properties(wt_echo PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+
+    # subscriber_test: libwebsrt public surface - config validation matrix
+    # and offline misuse always run; the live negative path (nonexistent
+    # stream -> HTTP 404) needs the same Rust gateway oracle and skips the
+    # same way. Only the public headers are included, which doubles as the
+    # no-internal-leakage check.
+    add_executable(subscriber_test tests/subscriber_test.cpp)
+    target_compile_features(subscriber_test PRIVATE cxx_std_20)
+    set_target_properties(subscriber_test PROPERTIES CXX_EXTENSIONS OFF)
+    target_link_libraries(subscriber_test PRIVATE websrt_warnings websrt Threads::Threads)
+    target_compile_definitions(subscriber_test PRIVATE
+        WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js")
+    add_test(NAME subscriber_test COMMAND subscriber_test)
+    set_tests_properties(subscriber_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 endif()

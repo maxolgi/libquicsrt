@@ -108,17 +108,29 @@ public:
     // `client` must outlive this object. The session never calls Connect;
     // the owner starts the WT session and the first callback (ready or
     // closed) drives the srt side.
-    explicit SubscriberSession(WTClient& client, SubscriberSessionParams params);
+    //
+    // Two-phase wiring: the owner constructs the session first (it is the
+    // WTClient's listener), then the WTClient (it needs the listener by
+    // reference), then calls AttachClient once both exist. Configure sets
+    // the SRT parameters and must happen before the session goes live.
+    explicit SubscriberSession(SubscriberSessionParams params);
     ~SubscriberSession();
 
     SubscriberSession(const SubscriberSession&)            = delete;
     SubscriberSession& operator=(const SubscriberSession&) = delete;
+
+    void AttachClient(WTClient& client);
+    void Configure(const SubscriberSessionParams& params);
 
     // ---- app thread ----
 
     // Waits until the SRT handshake completed (true), the session closed
     // (false, *why set), or timeout_ms elapsed (false, *why empty).
     bool WaitEstablished(int timeout_ms, std::string* why);
+
+    // Waits until the session reached its terminal state. True when
+    // closed, false on timeout.
+    bool WaitClosed(int timeout_ms);
 
     // Delivers one SRT message (a TS chunk of at most the payload size)
     // into buf. len must be at least the configured payload size; see
@@ -174,8 +186,8 @@ private:
         kClosed,    // terminal
     };
 
-    WTClient&                     client_;
-    const SubscriberSessionParams params_;
+    WTClient*               client_ = nullptr; // set by AttachClient, pre-use
+    SubscriberSessionParams params_;
 
     // Fake address labeling the gateway for srt dispatch (mirrors M0's
     // caller label; the address never reaches a network, it only has to be

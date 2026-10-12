@@ -194,7 +194,12 @@ struct WtClientCallbacks
             return; // teardown already running (engine destroy path)
         }
         const WTClient::State state = c->state_.load();
-        c->ScheduleTeardown(state == WTClient::State::kClosing ? "closed locally" : "connection closed");
+        // A reason stashed by CloseGracefully (e.g. an HTTP-rejected
+        // extended CONNECT) wins over the generic close reasons.
+        const std::string reason = !c->pending_close_reason_.empty()
+                                       ? c->pending_close_reason_
+                                       : (state == WTClient::State::kClosing ? "closed locally" : "connection closed");
+        c->ScheduleTeardown(reason);
     }
 
     static void OnHskDone(lsquic_conn_t* conn, enum lsquic_hsk_status status)
@@ -257,7 +262,7 @@ struct WtClientCallbacks
         return FromConn(conn)->OnDgWriteFromEngine(buf, size);
     }
 
-    static int VerifyCert(void* ctx, struct stack_st_X509* chain)
+    static int VerifyCertPinned(void* ctx, struct stack_st_X509* chain)
     {
         auto* c    = static_cast<WTClient*>(ctx);
         X509* leaf = sk_X509_value(chain, 0);
@@ -280,6 +285,101 @@ struct WtClientCallbacks
             HexStr(c->expected_hash_, sizeof c->expected_hash_).c_str(),
             match ? "MATCH" : "MISMATCH");
         return match ? 0 : -1;
+    }
+
+    // The system trust store, loaded once per process from the first
+    // standard CA bundle that exists (read-only afterwards, so sharing it
+    // across engines and threads is safe).
+    static X509_STORE* SystemCaStore()
+    {
+        static const char* kCaBundles[] = {
+            "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu
+            "/etc/pki/tls/certs/ca-bundle.crt",   // Fedora/RHEL
+            "/etc/ssl/ca-bundle.pem",             // openSUSE
+        };
+        static X509_STORE* store = []
+        {
+            X509_STORE* s = X509_STORE_new();
+            if (s == nullptr)
+            {
+                return static_cast<X509_STORE*>(nullptr);
+            }
+            for (const char* path : kCaBundles)
+            {
+                X509_LOOKUP* lookup = X509_STORE_add_lookup(s, X509_LOOKUP_file());
+                if (lookup != nullptr && X509_LOOKUP_load_file(lookup, path, X509_FILETYPE_PEM) == 1)
+                {
+                    return s;
+                }
+            }
+            X509_STORE_free(s);
+            return static_cast<X509_STORE*>(nullptr);
+        }();
+        return store;
+    }
+
+    // PKI mode: verify the presented chain against the system CAs and
+    // require the target host (SNI) to match a certificate SAN.
+    static int VerifyCertPki(void* ctx, struct stack_st_X509* chain)
+    {
+        auto* c    = static_cast<WTClient*>(ctx);
+        X509* leaf = sk_X509_value(chain, 0);
+        if (leaf == nullptr)
+        {
+            return -1;
+        }
+        X509_STORE* store = SystemCaStore();
+        if (store == nullptr)
+        {
+            Log("cert verify: no system CA bundle found");
+            return -1;
+        }
+
+        // The untrusted intermediates are the chain minus the leaf; refs
+        // are bumped so the stack can be safely freed afterwards.
+        STACK_OF(X509)* untrusted = sk_X509_new_null();
+        if (untrusted == nullptr)
+        {
+            return -1;
+        }
+        for (std::size_t i = 1; i < static_cast<std::size_t>(sk_X509_num(chain)); ++i)
+        {
+            X509* cert = sk_X509_value(chain, i);
+            if (cert == nullptr || X509_up_ref(cert) < 1)
+            {
+                continue;
+            }
+            sk_X509_push(untrusted, cert);
+        }
+
+        X509_STORE_CTX* csc     = X509_STORE_CTX_new();
+        bool            name_ok = false;
+        if (csc != nullptr && X509_STORE_CTX_init(csc, store, leaf, untrusted) == 1)
+        {
+            if (X509_verify_cert(csc) == 1)
+            {
+                sockaddr_in probe;
+                if (inet_pton(AF_INET, c->peer_host_.c_str(), &probe.sin_addr) == 1)
+                {
+                    name_ok = X509_check_ip_asc(leaf, c->peer_host_.c_str(), 0) == 1;
+                }
+                else
+                {
+                    name_ok = X509_check_host(leaf, c->peer_host_.c_str(), c->peer_host_.size(), 0, nullptr) == 1;
+                }
+                if (!name_ok)
+                {
+                    Log("cert verify: chain ok but host \"%s\" matches no SAN", c->peer_host_.c_str());
+                }
+            }
+            else
+            {
+                Log("cert verify: chain rejected: %s", X509_verify_cert_error_string(X509_STORE_CTX_get_error(csc)));
+            }
+        }
+        X509_STORE_CTX_free(csc);
+        sk_X509_pop_free(untrusted, X509_free);
+        return name_ok ? 0 : -1;
     }
 
     static int PacketsOut(void* ctx, const struct lsquic_out_spec* specs, unsigned count)
@@ -402,8 +502,11 @@ bool WTClient::Connect(const Target& target)
     sockaddr_in peer{};
     peer.sin_family = AF_INET;
     peer.sin_port   = htons(target.port);
+    // Empty cert_hash_hex selects PKI validation; otherwise it must parse
+    // as the pinned SHA-256 of the certificate DER.
+    pin_cert_ = !target.cert_hash_hex.empty();
     if (target.port == 0 || target.path.empty() || inet_pton(AF_INET, target.host.c_str(), &peer.sin_addr) != 1 ||
-        !ParseHashHex(target.cert_hash_hex, expected_hash_))
+        (pin_cert_ && !ParseHashHex(target.cert_hash_hex, expected_hash_)))
     {
         return false;
     }
@@ -413,6 +516,7 @@ bool WTClient::Connect(const Target& target)
         return false;
     }
     path_      = target.path;
+    peer_host_ = target.host;
     authority_ = target.host + ":" + std::to_string(target.port);
     loop_.Post([this, target] { ConnectOnLoop(target); });
     return true;
@@ -477,7 +581,7 @@ void WTClient::ConnectOnLoop(const Target& target)
     api.ea_packets_out_ctx = this;
     api.ea_stream_if       = &WtClientCallbacks::kStreamIf;
     api.ea_stream_if_ctx   = this;
-    api.ea_verify_cert     = WtClientCallbacks::VerifyCert;
+    api.ea_verify_cert     = pin_cert_ ? WtClientCallbacks::VerifyCertPinned : WtClientCallbacks::VerifyCertPki;
     api.ea_verify_ctx      = this;
     engine_                = lsquic_engine_new(LSENG_HTTP, &api);
     if (engine_ == nullptr)
@@ -583,6 +687,25 @@ void WTClient::CloseOnLoop()
     else if (engine_ != nullptr)
     {
         ScheduleTeardown("closed before the connection came up");
+    }
+}
+
+void WTClient::CloseGracefully(const std::string& reason)
+{
+    const State state = state_.load();
+    if (state == State::kClosed)
+    {
+        return;
+    }
+    if (conn_ != nullptr)
+    {
+        pending_close_reason_ = reason;
+        state_.store(State::kClosing);
+        lsquic_conn_close(conn_);
+    }
+    else
+    {
+        ScheduleTeardown(reason);
     }
 }
 
@@ -723,7 +846,10 @@ void WTClient::ReadSessionStream(lsquic_stream_t* stream)
                     }
                     else
                     {
-                        ScheduleTeardown("HTTP status " + std::to_string(http_status_.load()));
+                        // The connection is live: close it gracefully so
+                        // the gateway sees CONNECTION_CLOSE instead of
+                        // holding a zombie until its idle timeout.
+                        CloseGracefully("HTTP status " + std::to_string(http_status_.load()));
                     }
                 }
             }
@@ -735,10 +861,13 @@ void WTClient::ReadSessionStream(lsquic_stream_t* stream)
         }
         if (n == 0)
         {
-            Log("session stream FIN");
             if (!stream_terminal_)
             {
+                // Stop the read interest: a FIN'd stream stays readable
+                // forever and would spin on_read otherwise.
                 stream_terminal_ = true;
+                lsquic_stream_wantread(stream, 0);
+                Log("session stream FIN");
                 listener_.OnStreamReadable();
             }
             break;
@@ -751,6 +880,7 @@ void WTClient::ReadSessionStream(lsquic_stream_t* stream)
         if (!stream_terminal_)
         {
             stream_terminal_ = true;
+            lsquic_stream_wantread(stream, 0);
             listener_.OnStreamReadable();
         }
         break;
@@ -784,7 +914,7 @@ std::size_t WTClient::ParseResponseHeaders()
     }
     else
     {
-        ScheduleTeardown(std::string("unparseable response status line: \"") + line + "\"");
+        CloseGracefully(std::string("unparseable response status line: \"") + line + "\"");
         return consumed;
     }
     return consumed;

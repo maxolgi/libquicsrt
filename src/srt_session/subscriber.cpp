@@ -49,9 +49,8 @@ bool ReasonIsCleanEnd(const std::string& reason)
 
 } // namespace
 
-SubscriberSession::SubscriberSession(WTClient& client, SubscriberSessionParams params)
-    : client_(client)
-    , params_(params)
+SubscriberSession::SubscriberSession(SubscriberSessionParams params)
+    : params_(params)
 {
     // Fake gateway address (10.220.0.1:5556 - M0's caller label). It is
     // only a label: dispatch happens by destination socket id inside the
@@ -65,6 +64,16 @@ SubscriberSession::SubscriberSession(WTClient& client, SubscriberSessionParams p
 SubscriberSession::~SubscriberSession()
 {
     Finalize();
+}
+
+void SubscriberSession::AttachClient(WTClient& client)
+{
+    client_ = &client;
+}
+
+void SubscriberSession::Configure(const SubscriberSessionParams& params)
+{
+    params_ = params;
 }
 
 // ---- loop thread: WTClientListener ----
@@ -87,13 +96,15 @@ void SubscriberSession::OnSessionReady()
     {
         // Record the srt-side failure, then close the WT session; the
         // resulting OnSessionClosed finalizes with this reason.
-        const std::lock_guard<std::mutex> lock(mutex_);
-        if (close_reason_.empty())
         {
-            close_reason_ = error;
-            graceful_     = false;
+            const std::lock_guard<std::mutex> lock(mutex_);
+            if (close_reason_.empty())
+            {
+                close_reason_ = error;
+                graceful_     = false;
+            }
         }
-        client_.Close();
+        client_->Close();
         return;
     }
 
@@ -167,7 +178,7 @@ int SubscriberSession::VtSend(const char* data, int len)
     // WTClient: a full queue or a gone session returns false, which we
     // report as a send failure - UDP-like loss that srt retransmits. Never
     // block an srt thread.
-    return client_.SendDatagram(data, static_cast<std::size_t>(len)) ? len : -1;
+    return client_->SendDatagram(data, static_cast<std::size_t>(len)) ? len : -1;
 }
 
 // ---- listener construction (loop thread) ----
@@ -179,7 +190,7 @@ bool SubscriberSession::StartListener(std::string* error)
 
     const int rtt_ms = [this]
     {
-        const auto rtt_us = client_.SmoothedRtt().count();
+        const auto rtt_us = client_->SmoothedRtt().count();
         if (rtt_us <= 0)
         {
             return 0; // unmeasured: leave srt's default estimator
@@ -330,6 +341,13 @@ bool SubscriberSession::WaitEstablished(int timeout_ms, std::string* why)
     }
 }
 
+bool SubscriberSession::WaitClosed(int timeout_ms)
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this] { return state_ == State::kClosed; });
+    return state_ == State::kClosed;
+}
+
 int SubscriberSession::Read(char* buf, int len, int timeout_ms)
 {
     if (buf == nullptr || len <= 0)
@@ -451,17 +469,20 @@ void SubscriberSession::RequestClose()
 
     // Graceful WT shutdown; OnSessionClosed (loop thread) finalizes the
     // srt side with reason "closed locally".
-    client_.Close();
+    client_->Close();
 
     // Belt and suspenders: when the WT layer never established (Connect
-    // rejected, loop never ran), no OnSessionClosed will arrive.
+    // rejected, loop never ran), no OnSessionClosed will arrive. Finalize
+    // runs WITHOUT the mutex (it takes it itself; racing Finalizes are
+    // made safe by its idempotent state check).
+    bool need_finalize = false;
     {
         const std::lock_guard<std::mutex> lock(mutex_);
-        if (state_ != State::kClosed && !wt_ready_)
-        {
-            Finalize("stopped locally", true);
-            return;
-        }
+        need_finalize = state_ != State::kClosed && !wt_ready_;
+    }
+    if (need_finalize)
+    {
+        Finalize("stopped locally", true);
     }
 }
 
