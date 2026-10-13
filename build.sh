@@ -25,12 +25,13 @@ EOF
 # the revision lsquic CI builds against).
 BORINGSSL_COMMIT=e20e8486554098772673b55ea76bb003d0b330e5
 
-# Pinned upstream FFmpeg release: newest n7.1.x tag (release line, per
-# the fork pin policy - never master). deps/ffmpeg is fetched (not a
-# submodule, gitignored) and the committed patch from examples/ffmpeg/
-# is applied on top.
-FFMPEG_TAG=n7.1.5
-FFMPEG_COMMIT=3a0867c2bfda4a4d4309ca1a8cbdc6175e67f587
+# Pinned FFmpeg master snapshot: the websrt protocol patch
+# (examples/ffmpeg/) is cut against master for upstream submission, so the
+# local gate builds that same snapshot. Deliberately pinned for
+# reproducibility; bumping = update the SHA, re-verify ./build.sh ffmpeg
+# + the golden gate. deps/ffmpeg is fetched (not a submodule, gitignored)
+# and the committed patch is applied on top.
+FFMPEG_MASTER_COMMIT=24e860f6d3c4f2ebae65ed7649e2a8860d512879
 
 # deps/boringssl is fetched (not a submodule, gitignored) and built
 # out-of-source; idempotent: no-op clone when the pin matches, fetch+checkout
@@ -57,7 +58,7 @@ stage_install() {
 }
 
 # Patched upstream FFmpeg with the websrt:// protocol (examples/ffmpeg/).
-# deps/ffmpeg is fetched (gitignored) at the pinned release tag, the
+# deps/ffmpeg is fetched (gitignored) at the pinned master snapshot, the
 # committed patch applied, and ffmpeg + ffprobe built against libwebsrt
 # via the staged install prefix's websrt.pc (cmake --install). Idempotent:
 # skips the clone when the pin matches, the apply when the tree is already
@@ -81,13 +82,19 @@ build_ffmpeg() {
         exit 1
     }
 
+    # A raw SHA can't be used with `git clone --branch`, so init + fetch
+    # the pin directly. reset+clean matter: an already-patched tree would
+    # otherwise leave the patch's untracked files (websrtproto.c) behind,
+    # breaking the apply step below.
     if [ ! -d deps/ffmpeg/.git ]; then
-        git clone --branch "$FFMPEG_TAG" --depth 1 \
-            https://github.com/FFmpeg/ffmpeg.git deps/ffmpeg
+        git init -q deps/ffmpeg
+        git -C deps/ffmpeg remote add origin https://github.com/FFmpeg/ffmpeg.git
     fi
-    if [ "$(git -C deps/ffmpeg rev-parse HEAD)" != "$FFMPEG_COMMIT" ]; then
-        git -C deps/ffmpeg fetch origin tag "$FFMPEG_TAG" --depth 1 --force
-        git -C deps/ffmpeg checkout -f "$FFMPEG_COMMIT"
+    if [ "$(git -C deps/ffmpeg rev-parse HEAD)" != "$FFMPEG_MASTER_COMMIT" ]; then
+        git -C deps/ffmpeg fetch --depth 1 origin "$FFMPEG_MASTER_COMMIT"
+        git -C deps/ffmpeg checkout -f --detach "$FFMPEG_MASTER_COMMIT"
+        git -C deps/ffmpeg reset --hard HEAD
+        git -C deps/ffmpeg clean -fdq
     fi
 
     if [ ! -f deps/ffmpeg/libavformat/websrtproto.c ]; then
