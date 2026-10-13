@@ -65,14 +65,17 @@ trap cleanup EXIT
 curl -fsS -m 5 "$HEALTH_URL" >/dev/null ||
     fail "Rust gateway unhealthy at $HEALTH_URL (check: sudo supervisorctl status websrt)"
 
-# Cert pinning: parse the gateway's runtime cert-hash.js. `null`
-# (mkcert / PKI mode) is out of scope for this gate - skip cleanly.
+# Cert mode: parse the gateway's runtime cert-hash.js. A pinned hash
+# selects `cert_hash=`; `null` (mkcert / PKI mode) selects `pki=1`.
 HASH=$(sed -n 's/.*CERT_HASH *= *"\([0-9a-fA-F]\{64\}\)".*/\1/p' "$CERT_JS" | head -1)
-if [ -z "$HASH" ] && grep -q 'CERT_HASH *= *null' "$CERT_JS"; then
-    echo "ffmpeg-gate: SKIP: gateway cert is PKI/mkcert mode (CERT_HASH null); pinned gate not applicable"
-    exit 0
+if [ -n "$HASH" ]; then
+    CERT_PARAM="cert_hash=$HASH"
+elif grep -q 'CERT_HASH *= *null' "$CERT_JS"; then
+    CERT_PARAM="pki=1"
+    echo "ffmpeg-gate: cert mode: pki (CERT_HASH null; pinning skipped)"
+else
+    fail "cannot parse CERT_HASH from $CERT_JS"
 fi
-[ -n "$HASH" ] || fail "cannot parse CERT_HASH from $CERT_JS"
 
 URL_HOST_PORT="$GW_HOST:$WT_PORT"
 
@@ -91,14 +94,14 @@ run_gate() {
         -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
         -re -f lavfi -i sine=frequency=440 \
         -c:v libx264 -preset veryfast -c:a aac \
-        -t 10 -f mpegts "websrt://$URL_HOST_PORT?stream=$stream&cert_hash_file=$CERT_JS" \
+        -t 10 -f mpegts "websrt://$URL_HOST_PORT?stream=$stream&$CERT_PARAM" \
         >"$tmp/pub.log" 2>&1 &
     PUB_PID=$!
 
     # (2) input golden ~2 s in: -c copy for 8 s.
     sleep "$SUB_DELAY_S"
     "$FFMPEG" -hide_banner -loglevel warning \
-        -f mpegts -i "websrt://$URL_HOST_PORT?stream=$stream&cert_hash_file=$CERT_JS" \
+        -f mpegts -i "websrt://$URL_HOST_PORT?stream=$stream&$CERT_PARAM" \
         -c copy -t 8 "$tmp/out.ts" \
         >"$tmp/sub.log" 2>&1 &
     SUB_PID=$!
@@ -108,8 +111,10 @@ run_gate() {
     # (pub + dump + sub) trip the local oracle's accept-loop stall
     # (documented deaf-oracle behavior); spreading them out avoids it.
     sleep $((DUMP_DELAY_S - SUB_DELAY_S))
+    local dump_cert=(--pki)
+    [ -n "$HASH" ] && dump_cert=(--cert-hash "$HASH")
     "$DUMP" --host "$GW_HOST" --port "$WT_PORT" --stream "$stream" \
-        --out "$tmp/dump.ts" --cert-hash "$HASH" \
+        --out "$tmp/dump.ts" "${dump_cert[@]}" \
         --duration 8 --stats-interval 5 \
         >"$tmp/dump.log" 2>&1 &
     DUMP_PID=$!

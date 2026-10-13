@@ -1,16 +1,21 @@
 # FFmpeg `websrt://` protocol
 
 `websrt://host:port?stream=NAME` as input and output, against upstream
-FFmpeg. Built by `./build.sh ffmpeg`: clones upstream FFmpeg at the
-pinned release tag (`n7.1.5` — see `build.sh`), applies
-`0001-avformat-add-websrt-protocol.patch`, and builds `deps/ffmpeg/ffmpeg`
-+ `ffprobe` linked against the local `libwebsrt` (via a generated
-`build/release/websrt.pc`; requires `./build.sh setup && ./build.sh lib`
-with WebTransport enabled first).
+FFmpeg. Built by `./build.sh ffmpeg`: fetches upstream FFmpeg at the
+pinned master snapshot (`FFMPEG_MASTER_COMMIT` in `build.sh`),
+applies `0001-avformat-add-websrt-protocol.patch`, and builds
+`deps/ffmpeg/ffmpeg` + `ffprobe` linked against the staged install
+tree (pkg-config prefix `build/release/stage`, from
+`./build.sh install`). Full chain (WebTransport enabled):
+
+    ./build.sh setup && ./build.sh lib && ./build.sh install && ./build.sh ffmpeg
+
+Bumping the FFmpeg pin = update `FFMPEG_MASTER_COMMIT`, re-verify
+`./build.sh ffmpeg` + the golden gate.
 
 ## URL grammar
 
-    websrt://host:port?stream=NAME[&cert_hash=HEX][&cert_hash_file=PATH][&pki=1][&latency_ms=N][&passphrase=…]
+    websrt://host:port?stream=NAME[&cert_hash=HEX][&pki=1][&latency_ms=N]
 
 - **Direction decides semantics**: an *output* (URL_WRONLY) publishes
   `NAME` toward the gateway (`?publish=NAME`); an *input* subscribes
@@ -18,15 +23,13 @@ with WebTransport enabled first).
 - `stream=NAME` — required stream name (first-wins occupancy: a second
   publisher gets "stream name in use" and exit 98/`EADDRINUSE`).
 - `cert_hash=HEX` — SHA-256 of the gateway cert DER (64 hex chars);
-  pins like a browser's `serverCertificateHashes`.
-- `cert_hash_file=PATH` — parse the gateway's runtime `cert-hash.js`
-  (`window.CERT_HASH = "<hex>"` pins, `= null` selects PKI). The cert
-  hash changes on every gateway restart.
+  pins like a browser's `serverCertificateHashes`. The gateway's
+  runtime `cert-hash.js` is a web artifact (`window.CERT_HASH = "<hex>"`;
+  `= null` selects PKI) — extract the hex with the sed the gate uses:
+  `sed -n 's/.*CERT_HASH *= *"\([0-9a-fA-F]\{64\}\)".*/\1/p' cert-hash.js`.
 - `pki=1` — normal PKI validation. **Default** when no cert parameter
   is given.
 - `latency_ms=N` — TSBPD latency floor (default 120).
-- `passphrase=…` — reserved, parsed and ignored (WebSRT's crypto rides
-  on WebTransport's TLS; there is no WT passphrase today).
 
 ## The golden commands (P2 gate)
 
@@ -38,10 +41,11 @@ resolved):
     ffmpeg -f mpegts -i websrt://gw:443?stream=test -c copy out.ts
 
 Locally (Rust gateway under supervisord: WebTransport UDP 127.0.0.1:4433,
-health 9091, self-signed cert → pin via its `cert-hash.js`):
+health 9091; pin its cert via the hash in its runtime `cert-hash.js`):
 
     CERT_JS=/home/flibb/maxolgi/WebSRT/web/public/cert-hash.js
-    URL="websrt://127.0.0.1:4433?stream=test&cert_hash_file=$CERT_JS"
+    HASH=$(sed -n 's/.*CERT_HASH *= *"\([0-9a-fA-F]\{64\}\)".*/\1/p' "$CERT_JS" | head -1)
+    URL="websrt://127.0.0.1:4433?stream=test&cert_hash=$HASH"   # HASH empty → &pki=1
 
     ./deps/ffmpeg/ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
         -re -f lavfi -i sine=frequency=440 \
@@ -67,7 +71,7 @@ Notes:
 - Reads deliver one SRT message at a time through an internal bounce
   buffer, so any caller buffer size works; the protocol blocks (1 s
   poll granularity) and a 15 s dataless stall fails the input.
-- A subscribing open retries the gateway's HTTP 404 for up to 10 s
+- A subscribing open retries the gateway's HTTP 404 for up to 20 s
   (live-edge join while a broadcast is starting); after that it fails.
 - Close on the output does a graceful stream end (flush + ACK drain +
   shutdown): subscribers see EOF and the stream name frees. Stats lines
