@@ -9,8 +9,8 @@ Companion repos: [WebSRT](https://github.com/maxolgi/WebSRT) (Rust — the
 reference implementation and interop oracle) and
 [maxolgi/srt](https://github.com/maxolgi/srt) (fork of Haivision/srt).
 
-**Status: bootstrap in progress.** The design, phases, and gates live in
-[libwebsrt.md](libwebsrt.md).
+**Status: P0–P2 shipped** — the client library and FFmpeg protocol are
+gate-green against the Rust gateway (byte-exact interop, golden commands).
 
 ## Build
 

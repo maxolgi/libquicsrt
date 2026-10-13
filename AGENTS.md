@@ -70,9 +70,12 @@ C++ implementation of WebSRT: client library (`libwebsrt`) and FFmpeg
 `WebSRT` (Rust — the reference implementation and interop oracle, **never
 modified from this repo**) and `maxolgi/srt` (fork of Haivision/srt).
 
-**Status: bootstrap pending.** The full design, decision log, phases, and gates
-live in `libwebsrt.md` (read it before implementing). This file defines the
-working conventions once code lands.
+**Status: P0–P2 shipped** — client library, FFmpeg `websrt://` protocol, all
+gates green (M0 loopback, P1 byte-exact interop + ffprobe, P2 golden commands
+2×). The gateway phases (P3/P4) belong to the `websrt-gateway-cpp` repo. The
+original design/plan doc (`libwebsrt.md`) was retired once complete; its git
+history keeps the decision log and the Rust→C++ gateway port map for the
+gateway repo to mine.
 
 ## Build commands (target — created at bootstrap)
 
@@ -111,8 +114,7 @@ git will clobber it). Pin policy: **releases only, never upstream master**
 (FFmpeg-supported line, fewer rebase surprises). Upgrades = fetch the new
 release tag from Haivision upstream, rebase `websrt` onto it, re-verify the
 gate-OFF build, then bump the submodule pin. Six config-gated patches (upstream
-UDP behavior unchanged; see `libwebsrt.md` §"srt fork — patch list") — five
-code patches plus one verified-upstream no-op:
+UDP behavior unchanged) — five code patches plus one verified-upstream no-op:
 
 1. Virtual transport seam behind `CChannel` (sendto→callback, eventfd wake
    replaces `select()`-on-UDP)
@@ -160,6 +162,10 @@ client side hand-drives extended CONNECT via raw `lsxpack` pseudo-headers.
 
 - SRT payload **1128** (6 × 188), negotiated `min(gateway, client)` — matches
   `crates/websrt/src/srt_sender.rs:29` in WebSRT. Do not "fix" to 1316.
+- Negotiated payload lands at **940** (Rust fills the HSv5 MTU field with 1128
+  although the field is documented as header-inclusive; the fork's `min()` then
+  derives MSS 1128 → payload 1084 → chunker floors to 940 = 5 × 188). Known,
+  intentional; byte-exactness unaffected.
 - WT datagrams: require ≥ 1200, warn > 1400.
 - TSBPD latency = `max(sender, receiver)`; gateway-side floor 10 ms; ingest
   default 120 ms.
@@ -251,8 +257,8 @@ to the request.
 ### 4. Goal-Driven Execution
 
 Transform tasks into verifiable goals and loop until verified. For multi-step
-tasks, state a plan with per-step verification. Phases and gates in
-`libwebsrt.md` are the success criteria — do not declare a phase done without
-its gate green.
+tasks, state a plan with per-step verification. The golden acceptance commands
+below and the test suite are the success criteria — do not declare work done
+without its gate green.
 
 If you are not sure about something dont overthink it and use internet search

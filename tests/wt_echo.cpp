@@ -1,7 +1,8 @@
-// wt_echo: P1 subscriber-primitive validation (libwebsrt.md, Risks #1),
-// now on the libwebsrt foundation (EventLoop + WTClient). A WebTransport
-// session is opened to the live Rust gateway, the gateway's SRT Conclusion
-// handshake is received as WT datagrams, and garbage WT datagrams are sent
+// wt_echo: P1 subscriber-primitive validation (the retired plan's Risks #1,
+// the lsquic client extended-CONNECT spike), now on the libwebsrt
+// foundation (EventLoop + WTClient). A WebTransport session is opened to the
+// live Rust gateway, the gateway's SRT Conclusion handshake is received as
+// WT datagrams, and garbage WT datagrams are sent
 // back. This validates the primitive the whole subscriber and publisher
 // stack rests on.
 //

@@ -1,18 +1,15 @@
 # libwebsrt — outstanding items
 
-Status after the P0–P2 sessions (fork `websrt` @ e3de15a pushed; repo master
-at 61a0ef4, unpushed). Gates green: M0 loopback, P1 byte-for-byte interop +
-ffprobe, P2 golden commands 2×.
+P0–P2 shipped and pushed (master on github.com/maxolgi/libwebsrt). The
+original plan doc was purged after completion — the Rust→C++ gateway port
+map for the gateway repo lives in `libwebsrt.md`'s git history (last
+commit touching it, before removal).
 
 ## Human actions
 
-- [ ] Rename the GitHub repo (new home `maxolgi/libwebsrt`; the local origin
-      already points there — nothing pushed yet).
-- [ ] Create `websrt-gateway-cpp` on GitHub (the gateway phases P3/P4 move
-      there; a follow-up session mines the gateway plan text from this repo's
-      git history).
-- [ ] Push both repos.
-
+- [ ] Create `websrt-gateway-cpp` on GitHub, then mine the gateway plan
+      (P3/P4 phases, port map) from this repo's git history —
+      `git log --follow -- libwebsrt.md`.
 - [ ] Browser arbiter (P2 final check): publish via the local golden command
       (see `examples/ffmpeg/README.md`), then open the WebSRT player against
       the local gateway — needs the WebSRT web dev server (`./build.sh web`
@@ -31,10 +28,6 @@ ffprobe, P2 golden commands 2×.
   drain in time" (WT pacing vs TSBPD at stream tail); falls back to `Stop()`
   cleanly and the name frees, but the drain window deserves a later tuning
   pass.
-- P3/P4 — the gateway phases (lsquic WT server, SRT initiator, broadcaster
-  fanout, UDP ingest, cert modes, web server, then hardening) live in the
-  `websrt-gateway-cpp` repo now; the original breakdown is preserved in this
-  file's git history for the gateway repo to mine.
 
 ## Observations for the WebSRT repo (Rust, separate repo — fix there)
 
@@ -55,13 +48,3 @@ ffprobe, P2 golden commands 2×.
 - 404-reset race: the gateway sometimes resets the CONNECT stream before
   the client reads the 404 — client sees a transport failure instead of a
   clean rejection. Flush the response before resetting.
-
-## Known behavioral quirks (documented, intentional)
-
-- Negotiated payload lands at 940 bytes (Rust puts 1128 in the HSv5 MTU
-  field; fork's `min()` then computes MSS 1128 → payload 1084 → chunker
-  floors 940 via `SRTO_MSS` readback). Byte-exactness unaffected.
-- `bytes_received`/`bytes_sent` stats include 44 B/packet SRT header
-  overhead; Read/Write payloads are pure TS bytes.
-- ffmpeg URL: direction decides semantics — output publishes, input
-  subscribes; same URL verbatim both ways.
