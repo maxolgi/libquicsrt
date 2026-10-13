@@ -2,28 +2,19 @@
 
 P0–P2 shipped and pushed (master on github.com/maxolgi/libwebsrt). The
 original plan doc was purged after completion — the Rust→C++ gateway port
-map for the gateway repo lives in `libwebsrt.md`'s git history (last
-commit touching it, before removal).
+map for the gateway repo lives in `libwebsrt.md`'s git history
+(`git log --follow -- libwebsrt.md`, from this checkout).
 
 ## Human actions
 
-- [ ] Create `websrt-gateway-cpp` on GitHub, then mine the gateway plan
-      (P3/P4 phases, port map) from this repo's git history —
-      `git log --follow -- libwebsrt.md`.
 - [ ] Browser arbiter (P2 final check): publish via the local golden command
       (see `examples/ffmpeg/README.md`), then open the WebSRT player against
       the local gateway — needs the WebSRT web dev server (`./build.sh web`
       in ~/maxolgi/WebSRT; the local supervisord `websrt` runs without web
       UI). Stream should play in the browser.
-- [ ] Decide on the sim-loss rebuild of the Rust gateway (below) — it swaps
-      the locally running supervisord service to a `--sim-loss` feature build.
 
 ## Deferred — this repo
 
-- P1 residual gate item: survive a `--sim-loss` gateway build. Requires
-  rebuilding the Rust gateway with the feature (`./build.sh gateway
-  --sim-loss` in ~/maxolgi/WebSRT), restarting the local service, re-running
-  `scripts/interop.sh`, then restoring the normal build. Not yet done.
 - P2 tuning: `Publisher::End(5 s)` frequently reports "send buffer did not
   drain in time" (WT pacing vs TSBPD at stream tail); falls back to `Stop()`
   cleanly and the name frees, but the drain window deserves a later tuning
