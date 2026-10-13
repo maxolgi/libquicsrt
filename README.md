@@ -1,21 +1,76 @@
 # libwebsrt
 
-C++ implementation of WebSRT, scoped to the client library and FFmpeg
-integration: `libwebsrt` (embeddable library for publishing and subscribing
-SRT-over-WebTransport streams) and an FFmpeg `websrt://` protocol handler.
-The C++ gateway lives in the separate `websrt-gateway-cpp` repo.
+**libwebsrt** is a C++ client library for WebSRT — SRT live streaming over
+WebTransport. It publishes and subscribes MPEG-TS streams to any WebSRT
+gateway, from plain C++ or directly from FFmpeg through the `websrt://`
+protocol, and interops with the reference
+[WebSRT](https://github.com/maxolgi/WebSRT) stack: the Rust gateway, its
+UDP ingest, and the browser player.
 
-Companion repos: [WebSRT](https://github.com/maxolgi/WebSRT) (Rust — the
-reference implementation and interop oracle) and
-[maxolgi/srt](https://github.com/maxolgi/srt) (fork of Haivision/srt).
+WebSRT carries SRT's live-streaming semantics — TSBPD latency control,
+retransmission, too-late drops — over HTTP/3 WebTransport, so the same
+stream reaches native clients and browsers alike. WebTransport's TLS
+replaces the SRT handshake's UDP cookie exchange: sessions connect with a
+single 1-RTT handshake, and self-signed gateways are pinned the way
+browsers pin them (SHA-256 of the certificate DER).
 
-**Status: P0–P2 shipped** — the client library and FFmpeg protocol are
-gate-green against the Rust gateway (byte-exact interop, golden commands).
+## Features
 
-## Build
+- Publisher and Subscriber with a blocking, exception-free C++ API and an
+  extern-C ABI (`websrt/websrt_c.h`) for FFmpeg and other C consumers
+- `websrt://` FFmpeg protocol — the same URL publishes as an output and
+  subscribes as an input, with live-edge join retries and bounded stalls
+- MPEG-TS framing: 188-aligned SRT live messages of at most 1128 bytes
+  (6 TS packets), any caller chunk size, negotiated payload floor
+- Certificate pinning or normal PKI validation; hostname verification
+- SRT statistics snapshots (sender and receiver views)
+- Typed session outcomes: rejected (name held / unknown stream), connect
+  timeout, transport failure — each distinguishable, none throwing
+- Single epoll event loop per session; cross-thread Stop with bounded
+  wake-up; graceful stream end that gives subscribers a clean EOF
 
-    ./build.sh setup     # one-time: submodule init, cmake configure
-    ./build.sh lib       # build libwebsrt
-    ./build.sh test      # run tests
+## Usage
 
-Requires gcc 13+, CMake 3.24+, ninja, nasm.
+With a [patched upstream FFmpeg](examples/ffmpeg) (`./build.sh ffmpeg`):
+
+    ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=30 -f lavfi -i sine=frequency=440 \
+           -c:v libx264 -preset veryfast -c:a aac -f mpegts websrt://gw:443?stream=test
+    ffmpeg -f mpegts -i websrt://gw:443?stream=test -c copy out.ts
+
+The same URL publishes and subscribes; `?stream=` names the stream. Pin a
+self-signed gateway with `?cert_hash=<64 hex>` or
+`?cert_hash_file=cert-hash.js` (the gateway's runtime file); omit the
+parameter for PKI.
+
+From C++:
+
+```cpp
+websrt::PublisherConfig cfg;
+cfg.host = "gw.example.net";
+cfg.stream_name = "test";
+cfg.cert_sha256_hex = "<64 hex chars from the gateway's cert-hash.js>";
+
+websrt::Publisher pub;
+if (pub.Start(cfg) == websrt::kPublishOk) {
+    pub.Write(ts_chunk, ts_len, 1000);   // any chunk size; returns bytes accepted
+    pub.End(5000);                       // graceful end: subscribers see EOF
+}
+```
+
+See `include/websrt/` for the full API (`Publisher`, `Subscriber`, configs,
+stats) and `apps/websrt-dump.cpp` for a complete subscriber example.
+
+## Building
+
+    ./build.sh setup     # one-time: submodule init/update (srt fork, lsquic), BoringSSL, cmake configure
+    ./build.sh lib       # build libwebsrt (+ apps)
+    ./build.sh test      # unit + loopback + live interop tests
+    ./build.sh ffmpeg    # patched upstream FFmpeg with the websrt protocol
+
+Requires gcc 13+, CMake 3.24+, ninja, nasm. The srt fork
+([maxolgi/srt](https://github.com/maxolgi/srt), branch `websrt`) and lsquic
+build as submodules; BoringSSL is fetched by the setup step.
+
+## License
+
+[MPL-2.0](LICENSE).
