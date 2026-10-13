@@ -1,3 +1,4 @@
+#include "wt/capsule.h"
 #include "wt/client.h"
 
 #include <sys/epoll.h>
@@ -20,7 +21,6 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
-#include <optional>
 #include <utility>
 
 namespace websrt
@@ -28,10 +28,6 @@ namespace websrt
 
 namespace
 {
-
-// WT capsule protocol (RFC 9599). Only CLOSE terminates the session; PADDING
-// and unknown types are skippable via the length prefix.
-constexpr std::uint64_t kCapsuleCloseWtSession = 0x2843;
 
 constexpr std::size_t kRecvBufSize = 16384;
 constexpr char        kUserAgent[] = "websrt-cpp";
@@ -57,59 +53,6 @@ std::string HexStr(const std::uint8_t* p, std::size_t n)
         s += kHex[p[i] & 0xf];
     }
     return s;
-}
-
-// QUIC varint (RFC 9000 s.16): 2-bit length prefix, big-endian payload.
-std::size_t VarintPut(std::uint8_t* dst, std::uint64_t v)
-{
-    if (v < 0x40)
-    {
-        dst[0] = static_cast<std::uint8_t>(v);
-        return 1;
-    }
-    if (v < 0x4000)
-    {
-        dst[0] = static_cast<std::uint8_t>(0x40 | v >> 8);
-        dst[1] = static_cast<std::uint8_t>(v);
-        return 2;
-    }
-    if (v < 0x40000000)
-    {
-        dst[0] = static_cast<std::uint8_t>(0x80 | v >> 24);
-        dst[1] = static_cast<std::uint8_t>(v >> 16);
-        dst[2] = static_cast<std::uint8_t>(v >> 8);
-        dst[3] = static_cast<std::uint8_t>(v);
-        return 4;
-    }
-    dst[0] = static_cast<std::uint8_t>(0xc0 | v >> 56);
-    dst[1] = static_cast<std::uint8_t>(v >> 48);
-    dst[2] = static_cast<std::uint8_t>(v >> 40);
-    dst[3] = static_cast<std::uint8_t>(v >> 32);
-    dst[4] = static_cast<std::uint8_t>(v >> 24);
-    dst[5] = static_cast<std::uint8_t>(v >> 16);
-    dst[6] = static_cast<std::uint8_t>(v >> 8);
-    dst[7] = static_cast<std::uint8_t>(v);
-    return 8;
-}
-
-std::optional<std::pair<std::uint64_t, std::size_t>> VarintGet(const std::uint8_t* p, std::size_t n)
-{
-    if (n < 1)
-    {
-        return std::nullopt;
-    }
-    const std::uint8_t first = p[0];
-    const std::size_t  len   = 1U << (first >> 6);
-    if (n < len)
-    {
-        return std::nullopt;
-    }
-    std::uint64_t v = first & 0x3f;
-    for (std::size_t i = 1; i < len; ++i)
-    {
-        v = v << 8 | p[i];
-    }
-    return std::make_pair(v, len);
 }
 
 bool ParseHashHex(const std::string& hex, std::uint8_t out[32])
@@ -860,8 +803,9 @@ void WTClient::ReadSessionStream(lsquic_stream_t* stream)
                 if (consumed > 0)
                 {
                     headers_done_ = true;
-                    ParseCapsules(session_buf_.data() + consumed, session_buf_.size() - consumed);
+                    capsule_parser_.Feed(session_buf_.data() + consumed, session_buf_.size() - consumed);
                     session_buf_.clear();
+                    NotifyCapsuleClose();
                     if (http_status_.load() == 200)
                     {
                         state_.store(State::kConnected);
@@ -878,7 +822,8 @@ void WTClient::ReadSessionStream(lsquic_stream_t* stream)
             }
             else
             {
-                ParseCapsules(buf, static_cast<std::size_t>(n));
+                capsule_parser_.Feed(buf, static_cast<std::size_t>(n));
+                NotifyCapsuleClose();
             }
             continue;
         }
@@ -943,38 +888,16 @@ std::size_t WTClient::ParseResponseHeaders()
     return consumed;
 }
 
-// Minimal capsule consumption: type + length varints, skip the payload.
-// CLOSE (0x2843) is the only type that changes session state.
-void WTClient::ParseCapsules(const std::uint8_t* data, std::size_t size)
+// Terminal stream notification for a consumed CLOSE capsule: the parser's
+// closed flag is sticky, stream_terminal_ makes the notify once.
+void WTClient::NotifyCapsuleClose()
 {
-    session_buf_.insert(session_buf_.end(), data, data + size);
-    std::size_t off = 0;
-    for (;;)
+    if (capsule_parser_.closed() && !stream_terminal_)
     {
-        const auto type = VarintGet(session_buf_.data() + off, session_buf_.size() - off);
-        if (!type)
-        {
-            break;
-        }
-        const auto length =
-            VarintGet(session_buf_.data() + off + type->second, session_buf_.size() - off - type->second);
-        if (!length)
-        {
-            break;
-        }
-        if (session_buf_.size() - off - type->second - length->second < length->first)
-        {
-            break;
-        }
-        if (type->first == kCapsuleCloseWtSession && !stream_terminal_)
-        {
-            stream_terminal_ = true;
-            Log("WT CLOSE capsule received (%u payload bytes)", static_cast<unsigned>(length->first));
-            listener_.OnStreamReadable();
-        }
-        off += type->second + length->second + length->first;
+        stream_terminal_ = true;
+        Log("WT CLOSE capsule received");
+        listener_.OnStreamReadable();
     }
-    session_buf_.erase(session_buf_.begin(), session_buf_.begin() + static_cast<std::ptrdiff_t>(off));
 }
 
 bool WTClient::NextTick(std::chrono::microseconds& diff)

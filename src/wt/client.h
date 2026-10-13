@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "core/event_loop.h"
+#include "wt/capsule.h"
 
 struct lsquic_engine;
 struct lsquic_conn;
@@ -163,7 +164,9 @@ private:
     // Returns the bytes consumed by the response header block, 0 when the
     // terminator has not arrived yet; sets http_status_.
     std::size_t ParseResponseHeaders();
-    void        ParseCapsules(const std::uint8_t* data, std::size_t size);
+    // Terminal stream notification for a consumed CLOSE capsule; fires at
+    // most once per session.
+    void NotifyCapsuleClose();
 
     EventLoop&        loop_;
     WTClientListener& listener_;
@@ -190,7 +193,8 @@ private:
     bool                      headers_done_    = false;
     bool                      stream_terminal_ = false;
     std::string               pending_close_reason_; // CloseGracefully's stashed reason
-    std::vector<std::uint8_t> session_buf_;          // response headers remainder + capsules
+    std::vector<std::uint8_t> session_buf_;          // response-header accumulation only, until headers_done_
+    WtCapsuleParser           capsule_parser_;       // session-stream capsule bytes
 
     std::deque<std::vector<std::uint8_t>> send_queue_;
     std::size_t                           datagram_write_size_ = 0;
