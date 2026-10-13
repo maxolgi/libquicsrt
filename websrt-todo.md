@@ -5,13 +5,12 @@ original plan doc was purged after completion — the Rust→C++ gateway port
 map for the gateway repo lives in `libwebsrt.md`'s git history
 (`git log --follow -- libwebsrt.md`, from this checkout).
 
-## Human actions
-
-- [ ] Browser arbiter (P2 final check): publish via the local golden command
-      (see `examples/ffmpeg/README.md`), then open the WebSRT player against
-      the local gateway — needs the WebSRT web dev server (`./build.sh web`
-      in ~/maxolgi/WebSRT; the local supervisord `websrt` runs without web
-      UI). Stream should play in the browser.
+Browser arbiter PASSED (the last P2 check): a golden-command publish
+(`…?stream=arbiter`) played in the WebSRT player served by the gateway
+itself on https://127.0.0.1:5173 (it serves web/dist + cert-hash.js —
+no separate dev server needed) — 846 frames decoded, 0 dropped,
+29.9 fps decode/render, AAC clean, software decode per the VAAPI note
+below.
 
 ## Deferred — this repo
 
