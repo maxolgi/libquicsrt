@@ -768,6 +768,7 @@ void PublisherSession::Finalize(const std::string& reason, bool graceful)
         closed_.store(true, std::memory_order_relaxed);
         listener           = std::exchange(listener_, SRT_INVALID_SOCK);
         accepted           = std::exchange(accepted_, SRT_INVALID_SOCK);
+        vt                 = std::exchange(vt_, nullptr);
         have_accept_thread = accept_thread_.joinable();
         // No deferred drain here (the subscriber's TSBPD tail lesson does
         // not apply: a publisher receives only ACK/NAK).
