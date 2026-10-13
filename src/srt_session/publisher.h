@@ -232,6 +232,10 @@ private:
     // srt_getlasterror for the failure paths.
     int SendOne(const std::uint8_t* buf, int len, int timeout_ms);
 
+    // Stats() but instantaneous (srt_bistats): the send-buffer fields
+    // report the CURRENT content, not srt's IIR-smoothed moving average.
+    bool StatsInstant(SRT_TRACEBSTATS* out);
+
     // Waits (bounded, polling) until the accepted socket's send buffer is
     // fully ACKed. True on drain, false on timeout or a lost socket.
     bool WaitSendBufferDrained(int timeout_ms);

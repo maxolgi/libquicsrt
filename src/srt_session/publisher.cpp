@@ -561,13 +561,33 @@ int PublisherSession::Write(const void* data, int len, int timeout_ms)
     return from_call;
 }
 
+// Instantaneous stats for the drain wait: plain srt_bstats reports the
+// send-buffer fields as IIR-smoothed moving averages (25 ms sampling,
+// dt/1000 weight, srtcore/buffer_tools.cpp), which decay exponentially
+// (~x0.6 per 500 ms) once the buffer is truly empty and kept this wait
+// pinned seconds past the real drain - the End(5 s) timeout was spent
+// waiting on an average, not on the buffer.
+bool PublisherSession::StatsInstant(SRT_TRACEBSTATS* out)
+{
+    SRTSOCKET sock = SRT_INVALID_SOCK;
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ != State::kConnected)
+        {
+            return false;
+        }
+        sock = accepted_;
+    }
+    return srt_bistats(sock, out, 0, 1) == 0;
+}
+
 bool PublisherSession::WaitSendBufferDrained(int timeout_ms)
 {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     for (;;)
     {
         SRT_TRACEBSTATS perf;
-        if (!Stats(&perf))
+        if (!StatsInstant(&perf))
         {
             return false; // socket gone
         }

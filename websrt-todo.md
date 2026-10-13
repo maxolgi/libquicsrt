@@ -12,13 +12,6 @@ no separate dev server needed) — 846 frames decoded, 0 dropped,
 29.9 fps decode/render, AAC clean, software decode per the VAAPI note
 below.
 
-## Deferred — this repo
-
-- P2 tuning: `Publisher::End(5 s)` frequently reports "send buffer did not
-  drain in time" (WT pacing vs TSBPD at stream tail); falls back to `Stop()`
-  cleanly and the name frees, but the drain window deserves a later tuning
-  pass.
-
 ## Observations for the WebSRT repo (Rust, separate repo — fix there)
 
 - **Player video decode needs software decode on this box**: with the debug
