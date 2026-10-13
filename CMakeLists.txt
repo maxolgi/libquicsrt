@@ -280,3 +280,26 @@ if(WEBSRT_ENABLE_WT)
     set_target_properties(websrt-dump PROPERTIES CXX_EXTENSIONS OFF)
     target_link_libraries(websrt-dump PRIVATE websrt_warnings websrt)
 endif()
+
+# Install + generated pkg-config for out-of-tree consumers. FFmpeg's
+# configure runs pkg-config WITHOUT --static, so Libs: must carry the whole
+# static chain (-lsrt, -llsquic, -lssl, -lcrypto, ...) - the line build.sh
+# hand-rolls in its ffmpeg pkg-config shim, generated here from the
+# configured tree instead of rewritten per run. The template is relocatable
+# (prefix=${pcfiledir}/../..): the tree is configured with the default
+# /usr/local prefix, but `cmake --install ... --prefix <dir>` must stage a
+# correct websrt.pc without a reconfigure.
+include(GNUInstallDirs)
+install(TARGETS websrt ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES include/websrt/websrt_c.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/websrt)
+if(WEBSRT_ENABLE_WT)
+    install(TARGETS srt_static lsquic ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    install(FILES "${WEBSRT_BORINGSSL_BUILD}/libssl.a" "${WEBSRT_BORINGSSL_BUILD}/libcrypto.a"
+            DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    set(WEBSRT_PC_LIBS "-lsrt -llsquic -lssl -lcrypto -lz -lpthread -lstdc++ -lm")
+else()
+    set(WEBSRT_PC_LIBS "-lsrt -lpthread -lstdc++ -lm")
+endif()
+configure_file(cmake/websrt.pc.in "${CMAKE_CURRENT_BINARY_DIR}/websrt.pc" @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/websrt.pc"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
