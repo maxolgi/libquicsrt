@@ -522,6 +522,7 @@ int PublisherSession::Write(const void* data, int len, int timeout_ms)
         if (error == 0)
         {
             error = srt_getlasterror(nullptr);
+            const std::lock_guard<std::mutex> lock(mutex_);
             if (close_reason_.empty())
             {
                 close_reason_ = std::string("srt_sendmsg2: ") + srt_getlasterror_str();
@@ -640,9 +641,12 @@ bool PublisherSession::End(int timeout_ms)
     // unACKed data would be dropped by the close.
     if (!WaitSendBufferDrained(std::max(remaining(), 0)))
     {
-        if (close_reason_.empty())
         {
-            close_reason_ = "End: send buffer did not drain in time";
+            const std::lock_guard<std::mutex> lock(mutex_);
+            if (close_reason_.empty())
+            {
+                close_reason_ = "End: send buffer did not drain in time";
+            }
         }
         return false;
     }
@@ -682,9 +686,12 @@ bool PublisherSession::End(int timeout_ms)
     }
     RequestClose();
     WaitClosed(2000);
-    if (close_reason_.empty() && !ClosedGracefully())
     {
-        close_reason_ = "End: gateway did not close after shutdown";
+        const std::lock_guard<std::mutex> lock(mutex_);
+        if (close_reason_.empty() && !(state_ == State::kClosed && graceful_))
+        {
+            close_reason_ = "End: gateway did not close after shutdown";
+        }
     }
     return IsClosed();
 }
