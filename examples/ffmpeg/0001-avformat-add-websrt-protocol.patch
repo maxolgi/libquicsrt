@@ -1,6 +1,6 @@
-From 850de279722648c9dd6394eb29d3664ffe83290a Mon Sep 17 00:00:00 2001
+From 39ef037c78a86cf2aec37e1f0815812d2cb69bc9 Mon Sep 17 00:00:00 2001
 From: maxolgi <maxolgi@users.noreply.github.com>
-Date: Mon, 12 Oct 2026 09:15:14 -0400
+Date: Tue, 13 Oct 2026 00:02:50 -0400
 Subject: [PATCH] avformat: add websrt:// protocol (WebSRT via libwebsrt)
 
 Publish (output) or subscribe (input) to a WebSRT gateway - SRT over
@@ -8,31 +8,36 @@ WebTransport - through libwebsrt's C ABI. Direction decides semantics:
 an output publishes ?stream=NAME, an input subscribes to it, so the
 same URL works verbatim on both sides.
 
-URL: websrt://host:port?stream=NAME[&cert_hash=HEX][&cert_hash_file=PATH]
-     [&pki=1][&latency_ms=N][&passphrase=...]
-cert_hash_file parses the gateway's runtime cert-hash.js (CERT_HASH =
-"<hex>" | null); with no cert parameter the protocol uses PKI.
-passphrase is parsed and logged as reserved/ignored. MPEG-TS bytes are
-framed by the library into 188-aligned SRT live messages of at most
-1128 bytes; reads bounce through an internal one-message buffer;
-writes loop over the library's partial-accept contract. Subscribing
-retries HTTP 404 and transient transport stalls (library-default
-connect timeout per attempt, 20 s window; live-edge join); publishing
-retries a stalled start once. A stalled peer bounds writes to 30 s
-and reads to 15 s.
+URL: websrt://host:port?stream=NAME[&cert_hash=HEX][&pki=1][&latency_ms=N]
+
+cert_hash pins the gateway certificate (SHA-256 of the DER, 64 hex
+chars) the way browsers pin self-signed WebTransport servers; with no
+cert parameter the protocol uses normal PKI validation.
+
+MPEG-TS bytes are framed by the library into 188-aligned SRT live
+messages of at most 1128 bytes; reads bounce through an internal
+one-message buffer; writes loop over the library's partial-accept
+contract.
+
+Subscribing retries HTTP 404 and transient transport stalls (live-edge
+join); publishing retries a stalled start once. A stalled peer bounds
+writes to 30 s and reads to 15 s.
+
+Signed-off-by: maxolgi <maxolgi@users.noreply.github.com>
 ---
  configure                 |   5 +
+ doc/protocols.texi        |  28 +++
  libavformat/Makefile      |   1 +
  libavformat/protocols.c   |   1 +
- libavformat/websrtproto.c | 502 ++++++++++++++++++++++++++++++++++++++
- 4 files changed, 509 insertions(+)
+ libavformat/websrtproto.c | 414 ++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 449 insertions(+)
  create mode 100644 libavformat/websrtproto.c
 
 diff --git a/configure b/configure
-index 1652b0d..47fd714 100755
+index c97ddb18..6f665eee 100755
 --- a/configure
 +++ b/configure
-@@ -296,6 +296,7 @@ External library support:
+@@ -302,6 +302,7 @@ External library support:
    --enable-libvpx          enable VP8 and VP9 de/encoding via libvpx [no]
    --enable-libvvenc        enable H.266/VVC encoding via vvenc [no]
    --enable-libwebp         enable WebP encoding via libwebp [no]
@@ -40,15 +45,15 @@ index 1652b0d..47fd714 100755
    --enable-libx264         enable H.264 encoding via x264 [no]
    --enable-libx265         enable HEVC encoding via x265 [no]
    --enable-libxeve         enable EVC encoding via libxeve [no]
-@@ -1973,6 +1974,7 @@ EXTERNAL_LIBRARY_LIST="
+@@ -2131,6 +2132,7 @@ EXTERNAL_LIBRARY_LIST="
      libvpx
      libvvenc
      libwebp
 +    libwebsrt
      libxevd
+     libxevdb
      libxeve
-     libxml2
-@@ -3822,6 +3824,8 @@ librtmpte_protocol_deps="librtmp"
+@@ -4119,6 +4121,8 @@ librtmpte_protocol_deps="librtmp"
  libsmbclient_protocol_deps="libsmbclient gplv3"
  libsrt_protocol_deps="libsrt"
  libsrt_protocol_select="network"
@@ -57,19 +62,58 @@ index 1652b0d..47fd714 100755
  libssh_protocol_deps="libssh"
  libtls_conflict="openssl gnutls mbedtls"
  libzmq_protocol_deps="libzmq"
-@@ -7021,6 +7025,7 @@ enabled libsoxr           && require libsoxr soxr.h soxr_create -lsoxr
- enabled libssh            && require_pkg_config libssh "libssh >= 0.6.0" libssh/sftp.h sftp_init
- enabled libspeex          && require_pkg_config libspeex speex speex/speex.h speex_decoder_init
- enabled libsrt            && require_pkg_config libsrt "srt >= 1.3.0" srt/srt.h srt_socket
+@@ -7396,6 +7400,7 @@ enabled libvvenc          && require_pkg_config libvvenc "libvvenc >= 1.6.1" "vv
+ enabled libwebp           && {
+     enabled libwebp_encoder      && require_pkg_config libwebp "libwebp >= 0.2.0" webp/encode.h WebPGetEncoderVersion
+     enabled libwebp_anim_encoder && check_pkg_config libwebp_anim_encoder "libwebpmux >= 0.4.0" webp/mux.h WebPAnimEncoderOptionsInit; }
 +enabled libwebsrt         && require_pkg_config libwebsrt websrt websrt/websrt_c.h websrt_publisher_create
- enabled libsvtav1         && require_pkg_config libsvtav1 "SvtAv1Enc >= 0.9.0" EbSvtAv1Enc.h svt_av1_enc_init_handle
- enabled libtensorflow     && require libtensorflow tensorflow/c/c_api.h TF_Version -ltensorflow
- enabled libtesseract      && require_pkg_config libtesseract tesseract tesseract/capi.h TessBaseAPICreate
+ enabled libx264           && require_pkg_config libx264 x264 "stdint.h x264.h" x264_encoder_encode &&
+                              require_cpp_condition libx264 x264.h "X264_BUILD >= 155" && {
+                              [ "$toolchain" != "msvc" ] ||
+diff --git a/doc/protocols.texi b/doc/protocols.texi
+index 7812d154..4a7a5fd0 100644
+--- a/doc/protocols.texi
++++ b/doc/protocols.texi
+@@ -2589,6 +2589,34 @@ SOCK_SEQPACKET). If greater than zero, this value is used as
+ @code{max_packet_size}. Ignored for SOCK_STREAM. Default is @code{0}.
+ @end table
+ 
++@section websrt
++
++WebSRT - Haivision Secure Reliable Transport over WebTransport - via the
++libwebsrt library. An output publishes the stream name toward the gateway,
++an input subscribes to it, so the same URL works verbatim on both sides.
++The protocol carries MPEG-TS bytes, framed by the library into 188-aligned
++SRT live messages of at most 1128 bytes.
++
++The required syntax for a WebSRT URL is:
++@example
++websrt://@var{hostname}:@var{port}[?@var{options}]
++@end example
++
++The following parameters can be set via command line options
++(or in code via @code{AVOption}s):
++
++@table @option
++@item stream=@var{NAME}
++Stream name; required.
++@item cert_hash=@var{HEX}
++SHA-256 of the gateway certificate DER (64 hex chars); pins the
++certificate the way browsers pin self-signed WebTransport gateways.
++@item pki=1
++Normal PKI validation; default when no cert parameter is given.
++@item latency_ms=@var{N}
++TSBPD latency floor. Default is @code{120}.
++@end table
++
+ @section zmq
+ 
+ ZeroMQ asynchronous messaging using the libzmq library.
 diff --git a/libavformat/Makefile b/libavformat/Makefile
-index 7ca68a7..4995a94 100644
+index 02fb2b92..cbddd2c6 100644
 --- a/libavformat/Makefile
 +++ b/libavformat/Makefile
-@@ -701,6 +701,7 @@ OBJS-$(CONFIG_TEE_PROTOCOL)              += teeproto.o tee_common.o
+@@ -727,6 +727,7 @@ OBJS-$(CONFIG_TEE_PROTOCOL)              += teeproto.o tee_common.o
  OBJS-$(CONFIG_TCP_PROTOCOL)              += tcp.o
  OBJS-$(CONFIG_IPFS_GATEWAY_PROTOCOL)     += ipfsgateway.o
  OBJS-$(CONFIG_IPNS_GATEWAY_PROTOCOL)     += ipfsgateway.o
@@ -78,23 +122,23 @@ index 7ca68a7..4995a94 100644
  TLS-OBJS-$(CONFIG_LIBTLS)                += tls_libtls.o
  TLS-OBJS-$(CONFIG_MBEDTLS)               += tls_mbedtls.o
 diff --git a/libavformat/protocols.c b/libavformat/protocols.c
-index 93a6d67..428e1ba 100644
+index aea09da4..ba1ceb95 100644
 --- a/libavformat/protocols.c
 +++ b/libavformat/protocols.c
-@@ -65,6 +65,7 @@ extern const URLProtocol ff_tls_protocol;
+@@ -66,6 +66,7 @@ extern const URLProtocol ff_dtls_protocol;
  extern const URLProtocol ff_udp_protocol;
  extern const URLProtocol ff_udplite_protocol;
  extern const URLProtocol ff_unix_protocol;
 +extern const URLProtocol ff_websrt_protocol;
  extern const URLProtocol ff_libamqp_protocol;
+ extern const URLProtocol ff_libcurl_protocol;
  extern const URLProtocol ff_librist_protocol;
- extern const URLProtocol ff_librtmp_protocol;
 diff --git a/libavformat/websrtproto.c b/libavformat/websrtproto.c
 new file mode 100644
-index 0000000..cfe53a4
+index 00000000..2ad44054
 --- /dev/null
 +++ b/libavformat/websrtproto.c
-@@ -0,0 +1,502 @@
+@@ -0,0 +1,414 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -123,14 +167,9 @@ index 0000000..cfe53a4
 + *   cert_hash=HEX        SHA-256 of the gateway cert DER (64 hex chars);
 + *                        pins the certificate the way browsers pin
 + *                        self-signed WebTransport gateways
-+ *   cert_hash_file=PATH  parse the gateway's runtime cert-hash.js
-+ *                        (window.CERT_HASH = "<hex>" | null)
 + *   pki=1                normal PKI validation (default when no cert
 + *                        parameter is given)
 + *   latency_ms=N         TSBPD latency floor (default 120)
-+ *   passphrase=...       reserved; parsed and ignored (there is no
-+ *                        WebTransport-side passphrase today - WebSRT's
-+ *                        crypto rides on TLS)
 + *
 + * Direction decides semantics: an OUTPUT (AVIO_FLAG_WRITE) publishes
 + * the stream name toward the gateway; an INPUT subscribes to it. The
@@ -149,11 +188,11 @@ index 0000000..cfe53a4
 + * failing, so a dead gateway cannot hang ffmpeg forever.
 + */
 +
++#include <stdlib.h>
 +#include <string.h>
 +
 +#include "libavutil/avstring.h"
 +#include "libavutil/error.h"
-+#include "libavutil/file.h"
 +#include "libavutil/log.h"
 +#include "libavutil/mem.h"
 +#include "libavutil/parseutils.h"
@@ -215,73 +254,6 @@ index 0000000..cfe53a4
 +    return s[64] == '\0';
 +}
 +
-+/* Parse the gateway's runtime cert-hash.js: the value assigned to
-+ * CERT_HASH - `"<64 hex>"` (self-signed mode, pinning) or `null`
-+ * (PKI mode). Strict: anything else fails the open. */
-+static int websrt_parse_cert_hash_js(URLContext *h, const char *path,
-+                                      char *hash_out /* 65 bytes, "" = PKI */)
-+{
-+    uint8_t *data = NULL;
-+    size_t   size = 0;
-+    const char *p, *q;
-+    int ret, i;
-+
-+    hash_out[0] = '\0';
-+    ret = av_file_map(path, &data, &size, AVIO_FLAG_READ, h);
-+    if (ret < 0)
-+        return ret;
-+
-+    /* Work on a NUL-terminated copy so string helpers stay bounded. */
-+    {
-+        char *js = av_mallocz(size + 1);
-+        if (!js) {
-+            av_file_unmap(data, size);
-+            return AVERROR(ENOMEM);
-+        }
-+        memcpy(js, data, size);
-+        av_file_unmap(data, size);
-+        data = (uint8_t *)js;
-+    }
-+
-+    p = strstr((const char *)data, "CERT_HASH");
-+    if (!p) {
-+        ret = AVERROR_INVALIDDATA;
-+        goto fail;
-+    }
-+    p += strlen("CERT_HASH");
-+    p += strspn(p, " \t\r\n");
-+    if (*p != '=') {
-+        ret = AVERROR_INVALIDDATA;
-+        goto fail;
-+    }
-+    p++;
-+    p += strspn(p, " \t\r\n");
-+    if (!strncmp(p, "null", 4))
-+        goto ok; /* PKI mode: empty hash */
-+    if (*p != '"') {
-+        ret = AVERROR_INVALIDDATA;
-+        goto fail;
-+    }
-+    p++;
-+    for (i = 0; i < 64; i++) {
-+        if (!av_isxdigit(p[i])) {
-+            ret = AVERROR_INVALIDDATA;
-+            goto fail;
-+        }
-+        hash_out[i] = av_tolower(p[i]);
-+    }
-+    hash_out[64] = '\0';
-+    if (p[64] != '"') {
-+        ret = AVERROR_INVALIDDATA;
-+        goto fail;
-+    }
-+ok:
-+    ret = 0;
-+fail:
-+    av_free(data);
-+    return ret;
-+}
-+
 +static int websrt_parse_options(URLContext *h, const char *uri,
 +                                char *host, int host_size, int *port,
 +                                char *stream, int stream_size,
@@ -319,38 +291,22 @@ index 0000000..cfe53a4
 +        av_strlcpy(s->cert_hash, buf, sizeof(s->cert_hash));
 +        cert_params++;
 +    }
-+    if (av_find_info_tag(buf, sizeof(buf), "cert_hash_file", p)) {
-+        int ret;
-+        if (cert_params) {
-+            av_log(h, AV_LOG_ERROR, "cert_hash, cert_hash_file and pki are mutually exclusive\n");
-+            return AVERROR(EINVAL);
-+        }
-+        ret = websrt_parse_cert_hash_js(h, buf, s->cert_hash);
-+        if (ret < 0) {
-+            av_log(h, AV_LOG_ERROR, "cannot parse cert hash from '%s'\n", buf);
-+            return ret;
-+        }
-+        cert_params++;
-+        av_log(h, AV_LOG_INFO, "cert_hash_file: %s\n",
-+               s->cert_hash[0] ? "pinned from CERT_HASH" : "PKI (CERT_HASH null)");
-+    }
 +    if (av_find_info_tag(buf, sizeof(buf), "pki", p)) {
 +        if (cert_params) {
-+            av_log(h, AV_LOG_ERROR, "cert_hash, cert_hash_file and pki are mutually exclusive\n");
++            av_log(h, AV_LOG_ERROR, "cert_hash and pki are mutually exclusive\n");
 +            return AVERROR(EINVAL);
 +        }
 +        cert_params++;
 +    }
 +    if (av_find_info_tag(buf, sizeof(buf), "latency_ms", p)) {
-+        s->latency_ms = atoi(buf);
-+        if (s->latency_ms <= 0) {
-+            av_log(h, AV_LOG_ERROR, "latency_ms must be positive\n");
++        char *end;
++        long latency = strtol(buf, &end, 10);
++        if (*end != '\0' || latency <= 0 || latency > 86400000) {
++            av_log(h, AV_LOG_ERROR, "latency_ms must be a positive integer <= 86400000\n");
 +            return AVERROR(EINVAL);
 +        }
++        s->latency_ms = (int)latency;
 +    }
-+    if (av_find_info_tag(buf, sizeof(buf), "passphrase", p))
-+        av_log(h, AV_LOG_WARNING, "passphrase parameter is reserved and ignored "
-+               "(WebSRT crypto rides on WebTransport's TLS)\n");
 +
 +    if (!stream[0]) {
 +        av_log(h, AV_LOG_ERROR, "stream name required (?stream=NAME)\n");
