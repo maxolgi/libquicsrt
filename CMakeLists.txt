@@ -78,7 +78,8 @@ find_package(Threads REQUIRED)
 
 add_library(websrt STATIC
     src/core/event_loop.cpp
-    src/core/version.cpp)
+    src/core/version.cpp
+    src/wt/capsule.cpp)
 add_library(websrt::websrt ALIAS websrt)
 target_compile_features(websrt PUBLIC cxx_std_20)
 set_target_properties(websrt PROPERTIES CXX_EXTENSIONS OFF)
@@ -165,6 +166,16 @@ target_include_directories(event_loop_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/s
 target_link_libraries(event_loop_test PRIVATE websrt_warnings websrt Threads::Threads)
 add_test(NAME event_loop_test COMMAND event_loop_test)
 set_tests_properties(event_loop_test PROPERTIES TIMEOUT 30)
+
+# WtCapsuleParser units: RFC 9599 capsule framing and QUIC varints, pure
+# parsing (no WebTransport needed, runs on the WT-off fast path too).
+add_executable(capsule_test tests/capsule_test.cpp)
+target_compile_features(capsule_test PRIVATE cxx_std_20)
+set_target_properties(capsule_test PROPERTIES CXX_EXTENSIONS OFF)
+target_include_directories(capsule_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(capsule_test PRIVATE websrt_warnings websrt Threads::Threads)
+add_test(NAME capsule_test COMMAND capsule_test)
+set_tests_properties(capsule_test PROPERTIES TIMEOUT 30)
 
 # M0 loopback: two forked srt sockets over an in-memory wire pair (gated
 # virtual transport seam, zero OS sockets). The srt CMake uses
