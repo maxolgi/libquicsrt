@@ -9,6 +9,7 @@ Commands:
     setup      One-time: submodule init, BoringSSL fetch+build, CMake configure (release)
     lib        Build libwebsrt (+ libsrt, lsquic)
     test       Run tests via ctest (release)
+    install    Stage a cmake --install tree ([prefix], default build/release/stage)
     ffmpeg     Build patched upstream FFmpeg with the websrt protocol
     ffmpeg-gate Run the P2 golden-commands gate (needs the Rust gateway + ffmpeg)
     interop    Run interop tests against the Rust gateway
@@ -47,12 +48,20 @@ setup_boringssl() {
     cmake --build deps/boringssl/build -j "$(nproc)"
 }
 
+# Stage a cmake --install tree: libwebsrt.a + static dep chain + headers +
+# websrt.pc under the given prefix (default build/release/stage). The
+# ffmpeg target points pkg-config at <stage>/lib/pkgconfig.
+stage_install() {
+    local prefix="${1:-$PWD/build/release/stage}"
+    cmake --install build/release --prefix "$prefix"
+}
+
 # Patched upstream FFmpeg with the websrt:// protocol (examples/ffmpeg/).
 # deps/ffmpeg is fetched (gitignored) at the pinned release tag, the
-# committed patch applied, and ffmpeg + ffprobe built against the local
-# libwebsrt via a generated pkg-config file. Idempotent: skips the clone
-# when the pin matches, the apply when the tree is already patched, and
-# the compile is incremental.
+# committed patch applied, and ffmpeg + ffprobe built against libwebsrt
+# via the staged install prefix's websrt.pc (cmake --install). Idempotent:
+# skips the clone when the pin matches, the apply when the tree is already
+# patched, and the compile is incremental.
 build_ffmpeg() {
     local patch="examples/ffmpeg/0001-avformat-add-websrt-protocol.patch"
     local repo_dir="$PWD"
@@ -63,6 +72,12 @@ build_ffmpeg() {
     }
     [ -f deps/boringssl/build/libssl.a ] || {
         echo "build.sh: ffmpeg: BoringSSL not built (run ./build.sh setup with WEBSRT_ENABLE_WT=ON)" >&2
+        exit 1
+    }
+
+    stage_install
+    [ -f "$repo_dir/build/release/stage/lib/pkgconfig/websrt.pc" ] || {
+        echo "build.sh: ffmpeg: staged websrt.pc missing (run ./build.sh install)" >&2
         exit 1
     }
 
@@ -88,18 +103,7 @@ build_ffmpeg() {
         }
     fi
 
-    # pkg-config shim over the static libwebsrt link line. Regenerated
-    # every run (paths are absolute, the tree may have moved).
-    cat > build/release/websrt.pc <<EOF_PC_
-prefix=$repo_dir
-Name: websrt
-Description: WebSRT client library (SRT over WebTransport), static
-Version: 0.1.0
-Cflags: -I\${prefix}/include
-Libs: -L\${prefix}/build/release -L\${prefix}/build/release/deps/lsquic/src/liblsquic -L\${prefix}/deps/boringssl/build -lwebsrt -lsrt -llsquic -lssl -lcrypto -lz -lpthread -lstdc++ -lm
-EOF_PC_
-
-    (cd deps/ffmpeg && PKG_CONFIG_PATH="$repo_dir/build/release" ./configure \
+    (cd deps/ffmpeg && PKG_CONFIG_PATH="$repo_dir/build/release/stage/lib/pkgconfig" ./configure \
         --enable-gpl --enable-libx264 --enable-libwebsrt)
     make -C deps/ffmpeg -j "$(nproc)" ffmpeg ffprobe
     echo "build.sh: ffmpeg: binaries at deps/ffmpeg/ffmpeg and deps/ffmpeg/ffprobe"
@@ -121,6 +125,9 @@ case "${1:-}" in
         ;;
     test)
         ctest --preset release
+        ;;
+    install)
+        stage_install "${2:-}"
         ;;
     ffmpeg)
         build_ffmpeg
