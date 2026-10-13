@@ -123,6 +123,9 @@ if(WEBSRT_ENABLE_WT)
     target_include_directories(websrt_wt_deps INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}/deps/lsquic/include
         ${WEBSRT_BORINGSSL_DIR}/include)
+    # lsquic is compiled with the server-WT feature macro: every TU that
+    # declares its structs must see the same define or the layouts diverge.
+    target_compile_definitions(websrt_wt_deps INTERFACE LSQUIC_WEBTRANSPORT_SERVER_SUPPORT=1)
     target_link_libraries(websrt_wt_deps INTERFACE
         lsquic ZLIB::ZLIB
         ${WEBSRT_BORINGSSL_BUILD}/libssl.a
