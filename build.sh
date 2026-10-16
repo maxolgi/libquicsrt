@@ -10,7 +10,9 @@ Commands:
     lib        Build libwebsrt (+ libsrt, lsquic)
     test       Run tests via ctest (release)
     install    Stage a cmake --install tree ([prefix], default build/release/stage)
-    ffmpeg     Build patched upstream FFmpeg with the websrt protocol
+    ffmpeg     Build patched upstream FFmpeg with the websrt protocol AND the
+               system libsrt (--enable-libsrt): stages the shared libwebsrt.so
+               (C-ABI-only exports) so both protocols coexist in one binary
     ffmpeg-gate Run the P2 golden-commands gate (needs the Rust gateway + ffmpeg)
     interop    Run interop tests against the Rust gateway
 
@@ -44,8 +46,12 @@ setup_boringssl() {
         git -C deps/boringssl fetch origin
         git -C deps/boringssl checkout -f "$BORINGSSL_COMMIT"
     fi
+    # POSITION_INDEPENDENT_CODE: the archives must link into the shared
+    # libwebsrt.so flavor (WEBSRT_BUILD_SHARED); harmless for static
+    # consumers.
     cmake -S deps/boringssl -B deps/boringssl/build \
-        -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+        -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     cmake --build deps/boringssl/build -j "$(nproc)"
 }
 
@@ -57,28 +63,49 @@ stage_install() {
     cmake --install build/release --prefix "$prefix"
 }
 
+# The shared C-ABI flavor staged for FFmpeg: libwebsrt.so exports only
+# websrt_* (cmake/websrt_shared.map); the srt fork, lsquic, and BoringSSL
+# are baked in as local symbols. This is what lets the same ffmpeg binary
+# also link a system libsrt (--enable-libsrt) - two srt copies in one
+# process must not share the flat srt_* namespace.
+build_shared() {
+    cmake -S . -B build/shared -DCMAKE_BUILD_TYPE=Release -DWEBSRT_BUILD_SHARED=ON
+    cmake --build build/shared --target websrt -j "$(nproc)"
+    cmake --install build/shared --prefix build/shared/stage
+    # The srt and lsquic submodules' own install rules leak their headers,
+    # static archives, and a non-relocatable srt.pc into the stage. Prune:
+    # this prefix must export exactly the websrt C ABI, and pkg-config
+    # `srt` has to keep resolving to the system for --enable-libsrt.
+    rm -rf build/shared/stage/include/srt \
+           build/shared/stage/include/lsquic \
+           build/shared/stage/lib/libsrt.a \
+           build/shared/stage/lib/liblsquic.a \
+           build/shared/stage/lib/pkgconfig/srt.pc \
+           build/shared/stage/lib/pkgconfig/haisrt.pc \
+           build/shared/stage/bin \
+           build/shared/stage/share
+}
+
 # Patched upstream FFmpeg with the websrt:// protocol (examples/ffmpeg/).
 # deps/ffmpeg is fetched (gitignored) at the pinned master snapshot, the
-# committed patch applied, and ffmpeg + ffprobe built against libwebsrt
-# via the staged install prefix's websrt.pc (cmake --install). Idempotent:
-# skips the clone when the pin matches, the apply when the tree is already
-# patched, and the compile is incremental.
+# committed patch applied, and ffmpeg + ffprobe built against the staged
+# shared libwebsrt.so's websrt.pc (build_shared above) PLUS the system
+# libsrt (--enable-libsrt) - one binary, both protocols, no shared
+# symbols between the two srt copies. Idempotent: skips the clone when
+# the pin matches, the apply when the tree is already patched, and the
+# compile is incremental.
 build_ffmpeg() {
     local patch="examples/ffmpeg/0001-avformat-add-websrt-protocol.patch"
     local repo_dir="$PWD"
 
-    [ -f build/release/libwebsrt.a ] || {
-        echo "build.sh: ffmpeg: libwebsrt not built (run ./build.sh setup && ./build.sh lib)" >&2
-        exit 1
-    }
     [ -f deps/boringssl/build/libssl.a ] || {
         echo "build.sh: ffmpeg: BoringSSL not built (run ./build.sh setup with WEBSRT_ENABLE_WT=ON)" >&2
         exit 1
     }
 
-    stage_install
-    [ -f "$repo_dir/build/release/stage/lib/pkgconfig/websrt.pc" ] || {
-        echo "build.sh: ffmpeg: staged websrt.pc missing (run ./build.sh install)" >&2
+    build_shared
+    [ -f "$repo_dir/build/shared/stage/lib/pkgconfig/websrt.pc" ] || {
+        echo "build.sh: ffmpeg: staged websrt.pc missing" >&2
         exit 1
     }
 
@@ -94,7 +121,10 @@ build_ffmpeg() {
         git -C deps/ffmpeg fetch --depth 1 origin "$FFMPEG_MASTER_COMMIT"
         git -C deps/ffmpeg checkout -f --detach "$FFMPEG_MASTER_COMMIT"
         git -C deps/ffmpeg reset --hard HEAD
-        git -C deps/ffmpeg clean -fdq
+        # -x: build artifacts (*.o/*.d) are gitignored; without -x they
+        # survive a pin bump and dangle against the new sources (stale
+        # .d files reference removed .c files and break the build).
+        git -C deps/ffmpeg clean -fdqx
     fi
 
     if [ ! -f deps/ffmpeg/libavformat/websrtproto.c ]; then
@@ -110,8 +140,19 @@ build_ffmpeg() {
         }
     fi
 
-    (cd deps/ffmpeg && PKG_CONFIG_PATH="$repo_dir/build/release/stage/lib/pkgconfig" ./configure \
-        --enable-gpl --enable-libx264 --enable-libwebsrt)
+    # System srt for --enable-libsrt: the coexistence pair of websrt://.
+    # Checked WITHOUT the staged prefix on PKG_CONFIG_PATH (that env is
+    # configure-only below), so this probes the system module.
+    if ! pkg-config --exists srt; then
+        echo "build.sh: ffmpeg: installing libsrt-openssl-dev (system srt for --enable-libsrt)..."
+        sudo apt-get install -y libsrt-openssl-dev || {
+            echo "build.sh: ffmpeg: libsrt-openssl-dev unavailable; coexistence cannot build" >&2
+            exit 1
+        }
+    fi
+
+    (cd deps/ffmpeg && PKG_CONFIG_PATH="$repo_dir/build/shared/stage/lib/pkgconfig" ./configure \
+        --enable-gpl --enable-libx264 --enable-libwebsrt --enable-libsrt)
     make -C deps/ffmpeg -j "$(nproc)" ffmpeg ffprobe
     echo "build.sh: ffmpeg: binaries at deps/ffmpeg/ffmpeg and deps/ffmpeg/ffprobe"
 }
