@@ -35,6 +35,7 @@ HEALTH_URL="http://127.0.0.1:9091/health"
 
 GW_HOST=127.0.0.1
 WT_PORT=4433
+SRT_PORT=9000    # the Rust gateway's stock SRT ingest (UDP, listener mode)
 SUB_DELAY_S=2   # input golden starts this long after the output golden
 DUMP_DELAY_S=6  # dump cross-check attaches here (streamed stagger, see below)
 
@@ -46,11 +47,12 @@ fail() {
 PUB_PID=
 SUB_PID=
 DUMP_PID=
+BRIDGE_PID=
 cleanup() {
-    for pid in "$PUB_PID" "$SUB_PID" "$DUMP_PID"; do
+    for pid in "$PUB_PID" "$SUB_PID" "$DUMP_PID" "$BRIDGE_PID"; do
         [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
     done
-    for pid in "$PUB_PID" "$SUB_PID" "$DUMP_PID"; do
+    for pid in "$PUB_PID" "$SUB_PID" "$DUMP_PID" "$BRIDGE_PID"; do
         [ -n "$pid" ] && wait "$pid" 2>/dev/null || true
     done
 }
@@ -165,6 +167,86 @@ run_gate() {
     echo "ffmpeg-gate: run $run: PASS"
 }
 
+# ---- coexistence run ----
+# One ffmpeg process, both stacks live: websrt:// input (libwebsrt inside
+# its C-ABI-only DSO) bridged to srt:// output into the gateway's stock
+# SRT ingest (system libsrt, routed under ?streamid=), closed by a plain
+# websrt:// subscriber. Requires the binary built by ./build.sh ffmpeg
+# with BOTH --enable-libwebsrt and --enable-libsrt; if the shared flavor
+# leaked any srt_* symbol, this link would not exist or would misbind.
+run_coexistence() {
+    local stream="ffmpeg-gate-$$-$(date +%s)-coexist"
+    local srt_stream="$stream-srt"
+    local tmp
+    tmp=$(mktemp -d /tmp/websrt-ffmpeg-gate.XXXXXX)
+
+    echo "ffmpeg-gate: coexistence run: websrt:// in -> srt:// out, one process"
+
+    # (1) source publisher over websrt:// (libwebsrt), 12 s.
+    "$FFMPEG" -hide_banner -loglevel warning \
+        -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
+        -re -f lavfi -i sine=frequency=440 \
+        -c:v libx264 -preset veryfast -c:a aac \
+        -t 12 -f mpegts "websrt://$URL_HOST_PORT?stream=$stream&$CERT_PARAM" \
+        >"$tmp/src.log" 2>&1 &
+    PUB_PID=$!
+
+    # (2) the coexistence unit, +2 s: websrt:// in (libwebsrt DSO) ->
+    #     srt:// out (system libsrt) for 10 s; the gateway republishes
+    #     the ingest under the streamid name.
+    sleep "$SUB_DELAY_S"
+    "$FFMPEG" -hide_banner -loglevel warning \
+        -f mpegts -i "websrt://$URL_HOST_PORT?stream=$stream&$CERT_PARAM" \
+        -c copy -t 10 -f mpegts "srt://$GW_HOST:$SRT_PORT?streamid=$srt_stream" \
+        >"$tmp/bridge.log" 2>&1 &
+    BRIDGE_PID=$!
+
+    # (3) +6 s: subscribe to the srt-republished stream over websrt://
+    #     (same stagger as the dump cross-check: three WT handshakes
+    #     within a few seconds trip the oracle's accept-loop stall).
+    sleep $((DUMP_DELAY_S - SUB_DELAY_S))
+    "$FFMPEG" -hide_banner -loglevel warning \
+        -f mpegts -i "websrt://$URL_HOST_PORT?stream=$srt_stream&$CERT_PARAM" \
+        -c copy -t 4 "$tmp/out.ts" \
+        >"$tmp/sub.log" 2>&1 &
+    SUB_PID=$!
+
+    wait "$PUB_PID" || {
+        cat "$tmp/src.log" >&2
+        PUB_PID=
+        fail "coexistence: source publisher exited non-zero"
+    }
+    PUB_PID=
+    wait "$BRIDGE_PID" || {
+        cat "$tmp/bridge.log" >&2
+        BRIDGE_PID=
+        fail "coexistence: srt/websrt bridge exited non-zero"
+    }
+    BRIDGE_PID=
+    wait "$SUB_PID" || {
+        cat "$tmp/sub.log" >&2
+        SUB_PID=
+        fail "coexistence: subscriber exited non-zero"
+    }
+    SUB_PID=
+
+    [ -s "$tmp/out.ts" ] || fail "coexistence: out.ts is empty"
+    local probe
+    probe=$("$FFPROBE" -v error -show_entries stream=codec_name,codec_type \
+        -of csv=p=0 "$tmp/out.ts") || fail "coexistence: ffprobe reported errors"
+    echo "$probe" | grep -q '^h264,video$' || fail "coexistence: no h264 video stream in out.ts"
+    echo "$probe" | grep -q '^aac,audio$' || fail "coexistence: no aac audio stream in out.ts"
+    local dur
+    dur=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$tmp/out.ts") ||
+        fail "coexistence: ffprobe cannot read duration"
+    awk -v d="$dur" 'BEGIN { exit !(d >= 3.0) }' ||
+        fail "coexistence: out.ts duration ${dur}s < 3 s"
+
+    echo "ffmpeg-gate:      out.ts: duration=${dur}s $(echo "$probe" | tr '\n' ' ')"
+    rm -rf "$tmp"
+    echo "ffmpeg-gate: coexistence: PASS"
+}
+
 GATE_RUNS=2
 run_no=1
 while [ "$run_no" -le "$GATE_RUNS" ]; do
@@ -172,4 +254,6 @@ while [ "$run_no" -le "$GATE_RUNS" ]; do
     run_no=$((run_no + 1))
 done
 
-echo "ffmpeg-gate: PASS ($GATE_RUNS consecutive runs)"
+run_coexistence
+
+echo "ffmpeg-gate: PASS ($GATE_RUNS consecutive runs + srt/websrt coexistence)"
