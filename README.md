@@ -65,11 +65,44 @@ stats) and `apps/websrt-dump.cpp` for a complete subscriber example.
     ./build.sh setup     # one-time: submodule init/update (srt fork, lsquic), BoringSSL, cmake configure
     ./build.sh lib       # build libwebsrt (+ apps)
     ./build.sh test      # unit + loopback + live interop tests
-    ./build.sh ffmpeg    # patched upstream FFmpeg with the websrt protocol
+    ./build.sh ffmpeg    # patched FFmpeg with websrt:// AND system srt:// (see below)
 
 Requires gcc 13+, CMake 3.24+, ninja, nasm. The srt fork
 ([maxolgi/srt](https://github.com/maxolgi/srt), branch `websrt`) and lsquic
 build as submodules; BoringSSL is fetched by the setup step.
+
+## Coexisting with system srt
+
+FFmpeg's `srt://` protocol links a normal libsrt (Debian:
+`libsrt-openssl-dev`, auto-installed by `./build.sh ffmpeg`). libwebsrt
+embeds a *fork* of srt — virtual transport, no built-in crypto — and ELF
+has one flat `srt_*` symbol namespace per process, so two srt copies in
+one binary fight over it: whichever the linker binds first silently wins,
+breaking the other (passphrase-less fork code serving `srt://`, or
+`websrt://` losing its fork-only API). A default-visibility shared build
+does not fix that; it only makes the interposition nondeterministic.
+
+The fix is namespace isolation. `./build.sh ffmpeg` stages the **shared
+flavor** of libwebsrt — `WEBSRT_BUILD_SHARED=ON`, a `libwebsrt.so` with
+the srt fork, lsquic, and BoringSSL linked in and localized by a linker
+version script (`cmake/websrt_shared.map`). The DSO exports exactly the
+extern-C ABI (`websrt_*` from `websrt/websrt_c.h`) and nothing else, so
+one FFmpeg binary carries both protocols with zero shared symbols:
+
+    ffmpeg -f mpegts -i websrt://gw:4433?stream=cam1 -c copy \
+           -f mpegts srt://obs:9000?streamid=cam1     # both stacks, one process
+
+`./build.sh ffmpeg-gate` proves it end to end: after the golden
+publish/subscribe runs, one ffmpeg process bridges `websrt://` input to
+`srt://` output into the Rust gateway's UDP ingest and the loop closes
+through a `websrt://` subscriber.
+
+The static flavor stays the default and unchanged — in-tree consumers
+(the C++ gateway, the internal tests) call the C++ API and the fork's
+sockets directly and need those symbols visible. Do not link the static
+chain (`-lwebsrt -lsrt -llsquic -lssl -lcrypto`) into anything that also
+links a system srt; that is the collision the shared flavor exists to
+avoid.
 
 ## License
 

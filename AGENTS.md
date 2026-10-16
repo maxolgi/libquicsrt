@@ -83,7 +83,7 @@ gateway repo to mine.
     ./build.sh lib       # build libwebsrt (+ apps)
     ./build.sh test      # unit + loopback (M0) + wt_echo tests
     ./build.sh interop   # scripts/interop.sh — requires the Rust gateway running locally
-    ./build.sh ffmpeg    # builds patched upstream FFmpeg with the websrt protocol (examples/ffmpeg/)
+    ./build.sh ffmpeg    # patched upstream FFmpeg with websrt:// + system srt:// (shared libwebsrt.so; examples/ffmpeg/)
 
 Raw form (what the script wraps — useful when debugging the script itself):
 
