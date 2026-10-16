@@ -19,6 +19,22 @@ set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
 set(ENABLE_APPS OFF CACHE BOOL "" FORCE)
 add_subdirectory(deps/srt)
 
+# Shared flavor: libwebsrt.so exporting ONLY the extern-C ABI
+# (include/websrt/websrt_c.h) via a linker version script - the C++ API,
+# the srt fork, lsquic, and BoringSSL are baked in as local symbols.
+# Sharing no symbols with anything else in the process is what lets one
+# FFmpeg binary carry websrt:// (this DSO) and srt:// (a system libsrt)
+# side by side; see README "Coexisting with system srt". The static
+# flavor stays the default: in-tree consumers (websrt-gateway-cpp, the
+# internal tests) call the C++ API and the fork's sockets directly and
+# need those symbols visible.
+option(WEBSRT_BUILD_SHARED "Build libwebsrt.so exporting only the C ABI" OFF)
+if(WEBSRT_BUILD_SHARED)
+    # Objects linked into the DSO must be PIC; the fork enables it only
+    # for its own shared flavor, so set it on the object library here.
+    set_target_properties(srt_virtual PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+
 # Consumer export surface. An out-of-tree consumer (the websrt-gateway-cpp
 # repo does add_subdirectory(deps/libwebsrt)) links these ALIASes and
 # nothing else:
@@ -72,14 +88,31 @@ if(WEBSRT_ENABLE_WT)
     # client side hand-drives extended CONNECT via lsxpack headers.
     set(LSQUIC_WEBTRANSPORT ON CACHE BOOL "" FORCE)
     add_subdirectory(deps/lsquic)
+    if(WEBSRT_BUILD_SHARED)
+        set_target_properties(lsquic PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    endif()
 endif()
 
 find_package(Threads REQUIRED)
 
-add_library(websrt STATIC
-    src/core/event_loop.cpp
-    src/core/version.cpp
-    src/wt/capsule.cpp)
+if(WEBSRT_BUILD_SHARED)
+    add_library(websrt SHARED
+        src/core/event_loop.cpp
+        src/core/version.cpp
+        src/wt/capsule.cpp)
+    set_target_properties(websrt PROPERTIES
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR})
+    # The export contract of the DSO: the C ABI only. Applied at link
+    # time, so the fork's srt.h "default" SRT_API visibility is moot.
+    target_link_options(websrt PRIVATE
+        "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cmake/websrt_shared.map")
+else()
+    add_library(websrt STATIC
+        src/core/event_loop.cpp
+        src/core/version.cpp
+        src/wt/capsule.cpp)
+endif()
 add_library(websrt::websrt ALIAS websrt)
 target_compile_features(websrt PUBLIC cxx_std_20)
 set_target_properties(websrt PROPERTIES CXX_EXTENSIONS OFF)
@@ -151,6 +184,10 @@ endif()
 
 enable_testing()
 
+# The internal tests below link the websrt target and call the C++ API /
+# internals, which the shared flavor localizes - only the C-ABI canary
+# (c_api_test) and the fork-level loopback build there.
+if(NOT WEBSRT_BUILD_SHARED)
 add_executable(smoke_test tests/smoke_test.cpp)
 target_compile_features(smoke_test PRIVATE cxx_std_20)
 set_target_properties(smoke_test PROPERTIES CXX_EXTENSIONS OFF)
@@ -176,6 +213,7 @@ target_include_directories(capsule_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(capsule_test PRIVATE websrt_warnings websrt Threads::Threads)
 add_test(NAME capsule_test COMMAND capsule_test)
 set_tests_properties(capsule_test PROPERTIES TIMEOUT 30)
+endif()
 
 # M0 loopback: two forked srt sockets over an in-memory wire pair (gated
 # virtual transport seam, zero OS sockets). The srt CMake uses
@@ -194,6 +232,24 @@ add_test(NAME loopback_srt COMMAND loopback_srt)
 # cert-hash.js; exits 77 (ctest SKIP_RETURN_CODE) when they are absent so CI
 # machines without the Rust world stay green.
 if(WEBSRT_ENABLE_WT)
+    # c_api_test: the extern-C ABI (websrt_c.h) the FFmpeg websrt://
+    # protocol links against - offline misuse always runs; the live
+    # gate (publish + subscribe round trip through the C API against
+    # the Rust gateway oracle) skips the same way as its siblings.
+    # Builds in the shared flavor too: it is the DSO's ABI canary.
+    add_executable(c_api_test tests/c_api_test.cpp)
+    target_compile_features(c_api_test PRIVATE cxx_std_20)
+    set_target_properties(c_api_test PROPERTIES CXX_EXTENSIONS OFF)
+    target_link_libraries(c_api_test PRIVATE websrt_warnings websrt Threads::Threads)
+    target_compile_definitions(c_api_test PRIVATE
+        WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js"
+        WEBSRT_FIXTURE_TS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/fixtures/test.ts")
+    add_test(NAME c_api_test COMMAND c_api_test)
+    set_tests_properties(c_api_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    # Everything below uses the C++ API or internals, which the shared
+    # flavor localizes - static flavor only.
+    if(NOT WEBSRT_BUILD_SHARED)
     add_executable(wt_echo tests/wt_echo.cpp)
     target_compile_features(wt_echo PRIVATE cxx_std_20)
     set_target_properties(wt_echo PROPERTIES CXX_EXTENSIONS OFF)
@@ -253,19 +309,7 @@ if(WEBSRT_ENABLE_WT)
     add_test(NAME publisher_test COMMAND publisher_test)
     set_tests_properties(publisher_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
-    # c_api_test: the extern-C ABI (websrt_c.h) the FFmpeg websrt://
-    # protocol links against - offline misuse always runs; the live
-    # gate (publish + subscribe round trip through the C API against
-    # the Rust gateway oracle) skips the same way as its siblings.
-    add_executable(c_api_test tests/c_api_test.cpp)
-    target_compile_features(c_api_test PRIVATE cxx_std_20)
-    set_target_properties(c_api_test PROPERTIES CXX_EXTENSIONS OFF)
-    target_link_libraries(c_api_test PRIVATE websrt_warnings websrt Threads::Threads)
-    target_compile_definitions(c_api_test PRIVATE
-        WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js"
-        WEBSRT_FIXTURE_TS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/fixtures/test.ts")
-    add_test(NAME c_api_test COMMAND c_api_test)
-    set_tests_properties(c_api_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endif()
 
     # consumer_test: the export-contract proof. It compiles in its own
     # directory scope (tests/consumer/) against ONLY the exported targets -
@@ -290,9 +334,26 @@ endif()
 # /usr/local prefix, but `cmake --install ... --prefix <dir>` must stage a
 # correct websrt.pc without a reconfigure.
 include(GNUInstallDirs)
-install(TARGETS websrt ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+# LIBRARY covers the DSO of the shared flavor, ARCHIVE the static lib.
+install(TARGETS websrt
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES include/websrt/websrt_c.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/websrt)
-if(WEBSRT_ENABLE_WT)
+set(WEBSRT_PC_EXTRA "")
+if(WEBSRT_BUILD_SHARED)
+    # The whole chain is baked into the DSO: consumers need -lwebsrt
+    # only. (The srt submodule's own install rules still stage its
+    # headers/libsrt.a/srt.pc into the prefix; build.sh prunes them so
+    # the staged prefix exports exactly the websrt C ABI and pkg-config
+    # `srt` keeps resolving to the system for --enable-libsrt.)
+    # The rpath lets binaries linked against this dev-stage DSO load it
+    # without LD_LIBRARY_PATH; pkg-config expands ${libdir} from the pc
+    # file location, so it stays relocatable. Distro-packaged libwebsrt
+    # ships its own pc without an rpath and the normal search path
+    # applies.
+    set(WEBSRT_PC_LIBS "")
+    set(WEBSRT_PC_EXTRA "-Wl,-rpath,\${libdir}")
+elseif(WEBSRT_ENABLE_WT)
     install(TARGETS srt_static lsquic ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
     install(FILES "${WEBSRT_BORINGSSL_BUILD}/libssl.a" "${WEBSRT_BORINGSSL_BUILD}/libcrypto.a"
             DESTINATION ${CMAKE_INSTALL_LIBDIR})

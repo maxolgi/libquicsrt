@@ -7,5 +7,5 @@ Name: websrt
 Description: WebSRT client library (SRT over WebTransport)
 Version: @PROJECT_VERSION@
 Cflags: -I${includedir}
-Libs: -L${libdir} -lwebsrt @WEBSRT_PC_LIBS@
+Libs: -L${libdir} -lwebsrt @WEBSRT_PC_LIBS@ @WEBSRT_PC_EXTRA@
 Libs.private: @WEBSRT_PC_LIBS@
