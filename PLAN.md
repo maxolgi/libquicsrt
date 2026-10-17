@@ -1,8 +1,7 @@
 # Plan: ReceiverCore publish path (send_message)
 
-Status: DRAFT. Consumer plan: `~/maxolgi/WebSRT-cpp/websrt-wasm-cpp/PLAN.md`
-(M6 consumes this deliverable). Retire this doc when the send path is
-merged, pushed, and the consumer pin is bumped.
+Status: Step 1 done (semantics below filled in from the oracle study);
+implementation steps 2-5 pending.
 
 ## Goal
 
@@ -82,10 +81,64 @@ green; stock build (receiver-only OFF) still builds and passes — the send
 path must not regress the full library. This repo's AGENTS.md build order
 and pin-chain rules apply unchanged.
 
-## Semantics (fill in during step 1 — delete this note when done)
+## Semantics (oracle study, step 1)
 
-- chunking / size limit per call:
-- actions emitted by send_message:
-- poll() send-side surfacing:
-- backpressure / too-late behavior:
-- stats mapping:
+Oracle: `SrtReceiver.send_message(bytes, now_us)` — `WebSRT/crates/srt-wasm/src/lib.rs:390-406` ("lib.rs" below); the send machinery lives in the maxolgi/srt-rs fork (srt-protocol). C++ references: `publisher.cpp` = `src/srt_session/publisher.cpp`, `core.cpp` = `deps/srt/srtcore/core.cpp`.
+
+- chunking / size limit per call: Oracle does NOT pre-chunk — the whole
+  buffer goes down as ONE message (one message_number + timestamp per call,
+  packets tagged FIRST/MIDDLE/LAST in srt-rs `sender/encapsulate.rs:25-39`),
+  split purely by the negotiated `max_packet_size` (HSv5 `min()` = 1128 both
+  sides; srt-rs subtracts no headers). No per-call limit, no 188-alignment
+  at the protocol layer (whole-TS input is the muxer's contract upstream),
+  and an empty buffer still emits one empty packet (unreachable in practice
+  — the worker guards `tsBytes.length === 0`, stream-worker.ts:412).
+  **C++ mapping:** C srt live+message API caps one packet per call
+  (`srt_sendmsg2` > negotiated payload → `SRT_ELARGEMSG`, core.cpp:7205), so
+  SendMessage pre-chunks per call: split at 940 (5×188) boundaries and flush
+  any short remainder as a final short chunk in the SAME call — never
+  carried across calls (the oracle keeps no cross-call send state). Each
+  chunk is its own srt message (message boundaries differ from the oracle's
+  single FIRST..LAST message; in-order wire bytes are identical and the
+  Rust gateway reassembles either). Empty input → no-op.
+- actions emitted by send_message: Oracle returns `Vec<SrtAction>` (kinds
+  0 SendDatagram / 3 WaitForData / 4 Close possible from the post-send
+  drain, lib.rs:53-54); not-handshaked AND closed both return an empty vec
+  silently (lib.rs:404), distinguished only by probes
+  `is_handshake_complete()`/`is_closed()`. **C++ mapping:** ReceiverCore
+  has no action channel — srt's internal threads pace and emit via VtSend —
+  so SendMessage returns int: bytes accepted (>0) or a `kSend*` status,
+  with DISTINCT codes for not-handshaked / closed (a deliberate, documented
+  deviation the Deliverables mandate; WaitEstablished/IsClosed remain the
+  probes). Accepted bytes leave via VtSend later, exactly as the oracle's
+  paced Output queue (SND-timer driven).
+- poll() send-side surfacing: Oracle: none beyond SendDatagram — no
+  buffer-space, too-late-drop, or send-error events exist (the srt-rs
+  Action enum is ReleaseData|SendPacket|UpdateStatistics|WaitForData|Close;
+  UpdateStatistics is swallowed internally, lib.rs:515-518; failures
+  surface only as Close). **C++:** nothing to add to Read/poll, no new
+  event kinds.
+- backpressure / too-late behavior: Oracle: send buffer full → silent
+  drop-OLDEST + tx_dropped_* stats only (srt-rs sender/buffer.rs:66-89);
+  flow window → WaitForAck stall past 25600 unacked; sender too-late drop
+  ungated at max(1.25×TSBPD, 1s) (buffer.rs:275-313). **C++ mapping:**
+  srt_sendmsg2 BLOCKS on a full buffer — bound it per call with
+  SRTO_SNDTIMEO (the Publisher::SendOne pattern, publisher.cpp:414-438):
+  `SRT_ETIMEOUT` → kSendTimeout (the buffer-full answer), `SRT_ECONNLOST`/
+  `SRT_ESCLOSED`/`SRT_ENOCONN` → kSendClosed, `SRT_ELARGEMSG` →
+  kSendInvalidArg; Finalize's socket close wakes an in-flight send
+  (SRT_ECONNLOST) so Stop stays prompt. Too-late drops happen INSIDE srt
+  (`sndDropTooLate`, gate-ON verified) and surface as pktSndDrop stats,
+  not return codes. No drop-oldest at the API: the C stack blocks instead
+  — same live outcome on the wire, different caller signal (documented
+  difference).
+- stats mapping (exact, via SRT_TRACEBSTATS): txData ← pktSentTotal (incl.
+  retransmits) · txBytes ← byteSentTotal (incl. 44 B IP+UDP+SRT headers) ·
+  txRetransmit ← pktRetransTotal · txLoss ← pktSndLossTotal · txBuffered ←
+  pktSndBuf (instantaneous, not a total — plain srt_bstats IIR-smooths the
+  sndbuf fields, srt_bistats(..., instantaneous=1) reports raw; pick at
+  implementation to keep the oracle's instantaneous semantics, cf.
+  publisher.cpp StatsInstant). Pull-only getter (oracle refreshes on a 1 s
+  internal timer, exposes getStats(); the consumer's srtw_get_stats /
+  harness stats_map.h already carries all five tx fields at fixed offsets —
+  no ABI change needed for stats).
