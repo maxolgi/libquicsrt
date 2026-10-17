@@ -14,7 +14,12 @@
 // receive slice the close hits (deterministic plus a raced loop). Also
 // gated: the publish happy path - SendMessage over an established pair
 // chunks at the negotiated payload and lands at the caller byte-identical,
-// with the tx stats live afterwards.
+// with the tx stats live afterwards. Also gated: the SendMessage edge
+// statuses and backpressure - pre-handshake (kSendNotHandshaked, both
+// never-Started and listening) and post-close (kSendClosed), plus the
+// buffer-full answer: with the core->caller sink gated shut the send
+// buffer fills and kSendTimeout comes out, and the caller drains again
+// once the gate opens.
 //
 // Plain checks (not assert) so the test stays meaningful in Release.
 
@@ -87,6 +92,13 @@ struct Harness
     websrt::ReceiverCore* core           = nullptr;
     SRTVirtualTransport*  caller_vt      = nullptr;
     sockaddr_in           listener_label = {};
+    // Core->caller gate for the backpressure case: datagrams still allowed
+    // through CoreSink. At zero it swallows every datagram but claims
+    // success (the VtSend swallow idiom - a failure return would read as
+    // UDP-like loss and build a retransmit storm instead of letting the
+    // send buffer fill). Large value = gate open (the default for every
+    // other case).
+    std::atomic<int> gate_pass_left{1 << 30};
 };
 
 // caller -> core: the raw socket's send callback hands the datagram to
@@ -104,6 +116,11 @@ int CallerSend(void* opaq, const char* data, int len, const struct sockaddr* /*d
 int CoreSink(void* opaq, const char* data, int len)
 {
     Harness* h = static_cast<Harness*>(opaq);
+    if (h->gate_pass_left.load(std::memory_order_relaxed) <= 0)
+    {
+        return len; // gate shut: drop the datagram, claim success
+    }
+    h->gate_pass_left.fetch_sub(1, std::memory_order_relaxed);
     return srt_virtual_transport_inject(h->caller_vt,
                                         data,
                                         len,
@@ -389,6 +406,155 @@ void SendMessageLoopback()
     TeardownWirePair(w);
 }
 
+// ---- (5) SendMessage edge cases ----
+
+// Pre-handshake: no connected accepted socket yet. A never-Start'ed core
+// (kIdle) and a listening one (accept parked, no caller ever connecting)
+// walk the same path - SendMessage reports kSendNotHandshaked both ways.
+// No WirePair here: without a caller there is no wire to build.
+void SendBeforeHandshake()
+{
+    Harness                          h;
+    const websrt::ReceiverCoreParams params;
+    websrt::ReceiverCore             core(params, &CoreSink, &h);
+    h.core = &core; // the sink cannot fire before a handshake completes
+
+    char      buf[16]      = {};
+    const int before_start = core.SendMessage(buf, static_cast<int>(sizeof buf), kTimeoutMs);
+    Check([&] { return before_start == websrt::ReceiverCore::kSendNotHandshaked; },
+          "SendMessage before Start returns not-handshaked (got " + std::to_string(before_start) + ")");
+
+    std::string error;
+    if (!core.Start(0, &error))
+    {
+        Fail("core Start: " + error);
+        return;
+    }
+    const int listening = core.SendMessage(buf, static_cast<int>(sizeof buf), kTimeoutMs);
+    Check([&] { return listening == websrt::ReceiverCore::kSendNotHandshaked; },
+          "SendMessage with the listener up but no caller returns not-handshaked (got " + std::to_string(listening) +
+              ")");
+    core.Finalize();
+}
+
+// Post-close: the StopUnblocksRead close path (Finalize = the facade's
+// Stop), then SendMessage reports kSendClosed.
+void SendAfterClose()
+{
+    WirePair                   w;
+    websrt::ReceiverCoreParams params;
+    if (!EstablishWirePair(w, params, 0))
+    {
+        TeardownWirePair(w);
+        return;
+    }
+
+    w.core->Finalize(); // the facade's Stop
+
+    char      buf[16] = {};
+    const int closed  = w.core->SendMessage(buf, static_cast<int>(sizeof buf), kTimeoutMs);
+    Check([&] { return closed == websrt::ReceiverCore::kSendClosed; },
+          "SendMessage after close returns closed (got " + std::to_string(closed) + ")");
+
+    TeardownWirePair(w);
+}
+
+// Buffer-full backpressure. The gate lets only the first few datagrams
+// through, then swallows the core->caller direction: the caller ACKs that
+// tiny prefix and nothing else, so ACKs effectively stop and the send
+// buffer fills (SNDBUF = clamp(120 ms * 40, 8192, 320000) = 8192 packets;
+// one 940 B message per call, so kSendTimeout is expected after ~8192
+// accepted sends - 3x that without one means backpressure is broken).
+// The prefix pass is what makes the recovery assertable: a receiver that
+// saw NOTHING can never report the loss (no gap to observe, and the
+// sender skips blind FASTREXMIT against a NAKREPORT peer), while every
+// new sequence would land past its window and break the connection - so
+// a contiguous ACKed prefix must survive for the caller to drain once
+// the gate opens.
+void SendBackpressure()
+{
+    constexpr int kChunkBytes   = 940;  // negotiated payload: 5 x 188
+    constexpr int kCapacityPkts = 8192; // SNDBUF packets at the 120 ms default latency
+    constexpr int kMaxSends     = 3 * kCapacityPkts;
+    constexpr int kSendSliceMs  = 200;
+    constexpr int kGatePass     = 4; // datagrams through before the gate shuts
+
+    WirePair                   w;
+    websrt::ReceiverCoreParams params;
+    if (!EstablishWirePair(w, params, 0))
+    {
+        TeardownWirePair(w);
+        return;
+    }
+
+    std::vector<std::uint8_t> data(static_cast<std::size_t>(kChunkBytes));
+    for (int i = 0; i < kChunkBytes; ++i)
+    {
+        data[static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(i);
+    }
+
+    // Gate shut: blast one message per call until the buffer-full answer.
+    w.h.gate_pass_left.store(kGatePass);
+    int  accepted  = 0;
+    bool timed_out = false;
+    for (int i = 0; i < kMaxSends && !timed_out; ++i)
+    {
+        const int r = w.core->SendMessage(reinterpret_cast<const char*>(data.data()), kChunkBytes, kSendSliceMs);
+        if (r == websrt::ReceiverCore::kSendTimeout)
+        {
+            timed_out = true;
+            break;
+        }
+        if (r != kChunkBytes)
+        {
+            Fail("blast SendMessage returned " + std::to_string(r) + " (close: " + w.core->close_reason() + ")");
+            break;
+        }
+        ++accepted;
+    }
+    Check([&] { return timed_out; },
+          "SendMessage hits the buffer-full timeout (no kSendTimeout within " + std::to_string(kMaxSends) +
+              " sends - backpressure is broken)");
+    Check([&] { return accepted >= kCapacityPkts - kGatePass; },
+          "timeout came from a full buffer, not early (accepted " + std::to_string(accepted) + " sends, floor " +
+              std::to_string(kCapacityPkts - kGatePass) + ")");
+
+    // Gate open: the caller drains the surviving prefix (the bounded
+    // receive of SendMessageLoopback, stopping at the first message) -
+    // at least the first message's bytes, byte-identical.
+    w.h.gate_pass_left.store(1 << 30);
+
+    const int slice_ms = 250;
+    if (srt_setsockopt(w.caller, 0, SRTO_RCVTIMEO, &slice_ms, sizeof slice_ms) == SRT_ERROR)
+    {
+        Fail(std::string("caller SRTO_RCVTIMEO: ") + srt_getlasterror_str());
+    }
+    std::vector<std::uint8_t> got;
+    char                      rbuf[websrt::kSrtPayloadSize];
+    const auto                deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kTimeoutMs);
+    while (got.size() < data.size() && std::chrono::steady_clock::now() < deadline)
+    {
+        const int n = srt_recvmsg(w.caller, rbuf, static_cast<int>(sizeof rbuf));
+        if (n > 0)
+        {
+            got.insert(got.end(), rbuf, rbuf + n);
+            continue;
+        }
+        if (srt_getlasterror(nullptr) != SRT_ETIMEOUT)
+        {
+            Fail(std::string("caller recvmsg: ") + srt_getlasterror_str());
+            break;
+        }
+    }
+    Check([&] { return got.size() >= data.size(); },
+          "caller drained the first message after the gate opened (got " + std::to_string(got.size()) +
+              " of >= " + std::to_string(data.size()) + ")");
+    Check([&] { return got.size() >= data.size() && std::memcmp(got.data(), data.data(), data.size()) == 0; },
+          "drained first message is byte-identical to the sent buffer");
+
+    TeardownWirePair(w);
+}
+
 } // namespace
 
 int main()
@@ -404,6 +570,9 @@ int main()
     StopUnblocksRead();
     StopReadRace();
     SendMessageLoopback();
+    SendBeforeHandshake();
+    SendAfterClose();
+    SendBackpressure();
 
     srt_cleanup();
     if (!g_ok)
