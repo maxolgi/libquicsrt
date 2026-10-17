@@ -5,6 +5,8 @@
 #include <cstring>
 #include <utility>
 
+#include "srt_session/negotiate.h"
+
 namespace websrt
 {
 
@@ -197,33 +199,8 @@ void PublisherSession::AcceptThread(SRTSOCKET listener)
 
         // The handshake negotiates min(gateway, listener) payload: the
         // chunker must frame to the negotiated size, not the configured
-        // one (M0's negotiated-payload readback). Two readbacks matter:
-        //   - SRTO_PAYLOADSIZE reports the EXPECTED size (the configured
-        //     value), not the effective cap;
-        //   - the real cap is MSS - 44 (UDP+IP+SRT data headers), and
-        //     the Rust initiator (srt_sender.rs) fills the HSv5 MTU
-        //     field with its payload size (1128) although srt-protocol
-        //     documents that field as "including UDP/IP headers" - so
-        //     the fork's min() negotiation lands MSS at 1128 and the
-        //     effective cap at 1084. Flooring the cap to whole TS
-        //     packets (940 = 5 x 188) keeps the framing 188-aligned.
-        int payload = params_.payload_size;
-        int optlen  = static_cast<int>(sizeof payload);
-        if (srt_getsockopt(accepted, 0, SRTO_PAYLOADSIZE, &payload, &optlen) == SRT_ERROR || payload < kTsPacketSize)
-        {
-            payload = params_.payload_size;
-        }
-        int mss = 1500;
-        optlen  = static_cast<int>(sizeof mss);
-        if (srt_getsockopt(accepted, 0, SRTO_MSS, &mss, &optlen) != SRT_ERROR)
-        {
-            const int cap = mss - (28 + 16);
-            if (cap >= kTsPacketSize)
-            {
-                payload = std::min(payload, cap / kTsPacketSize * kTsPacketSize);
-            }
-        }
-        chunker_  = TsChunker(payload);
+        // one (M0's negotiated-payload readback; see negotiate.h).
+        chunker_  = TsChunker(NegotiatePayload(accepted, params_.payload_size));
         accepted_ = accepted;
         state_    = State::kConnected;
     }

@@ -169,6 +169,7 @@ if(WEBSRT_ENABLE_WT)
         src/wt/client.cpp
         src/srt_session/subscriber.cpp
         src/srt_session/publisher.cpp
+        src/srt_session/negotiate.cpp
         src/websrt/config.cpp
         src/websrt/resolve.cpp
         deps/srt/apps/apputil.cpp
