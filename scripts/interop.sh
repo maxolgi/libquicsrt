@@ -20,12 +20,12 @@
 # after connecting for exactly that).
 #
 # Usage: ./build.sh interop  (or scripts/interop.sh directly)
-#   WEBSRT_DIR  Rust WebSRT checkout (default /home/flibb/maxolgi/WebSRT)
+#   WEBSRT_DIR  Rust WebSRT checkout (default $HOME/maxolgi/WebSRT)
 
 set -euo pipefail
 
 REPO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-WEBSRT_DIR="${WEBSRT_DIR:-/home/flibb/maxolgi/WebSRT}"
+WEBSRT_DIR="${WEBSRT_DIR:-$HOME/maxolgi/WebSRT}"
 
 GW_HOST=127.0.0.1
 WT_PORT=4433

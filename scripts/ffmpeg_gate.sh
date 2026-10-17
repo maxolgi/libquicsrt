@@ -20,12 +20,12 @@
 # ignored by the ffmpeg CLI).
 #
 # Usage: ./build.sh ffmpeg-gate  (or scripts/ffmpeg_gate.sh directly)
-#   WEBSRT_DIR  Rust WebSRT checkout (default /home/flibb/maxolgi/WebSRT)
+#   WEBSRT_DIR  Rust WebSRT checkout (default $HOME/maxolgi/WebSRT)
 
 set -euo pipefail
 
 REPO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-WEBSRT_DIR="${WEBSRT_DIR:-/home/flibb/maxolgi/WebSRT}"
+WEBSRT_DIR="${WEBSRT_DIR:-$HOME/maxolgi/WebSRT}"
 
 FFMPEG="$REPO_DIR/deps/ffmpeg/ffmpeg"
 FFPROBE="$REPO_DIR/deps/ffmpeg/ffprobe"

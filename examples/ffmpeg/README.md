@@ -44,7 +44,7 @@ resolved):
 Locally (Rust gateway under supervisord: WebTransport UDP 127.0.0.1:4433,
 health 9091; pin its runtime `cert-hash.js` directly):
 
-    CERT_JS=/home/flibb/maxolgi/WebSRT/web/public/cert-hash.js
+    CERT_JS=$HOME/maxolgi/WebSRT/web/public/cert-hash.js
     URL="websrt://127.0.0.1:4433?stream=test&cert_hash_file=$CERT_JS"
 
     ./deps/ffmpeg/ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
