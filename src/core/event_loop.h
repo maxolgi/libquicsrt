@@ -77,9 +77,21 @@ public:
     // Stops the loop and joins its thread. No-op when not running.
     void Stop();
 
-    // Runs `fn` on the loop thread as soon as the loop is idle. Functors
-    // posted while the loop is not running are dropped.
-    void Post(std::function<void()> fn);
+    // Runs `fn` on the loop thread as soon as the loop is idle. Returns
+    // true when a live loop accepted the job, false when the loop has
+    // stopped or never started, so the job will never run.
+    //
+    // Contract:
+    // - true: the job was enqueued while the loop was running, decided
+    //   under the same mutex that guards the posted queue and the stop
+    //   state. It executes exactly once before the loop thread exits: the
+    //   loop drains pending posts while shutting down, so a Stop racing
+    //   the Post either waits for the job or causes a false return.
+    // - false: the job was not enqueued and will never run.
+    // - There is no window in between: Post's accept test and Stop's stop
+    //   flip are serialized, so no accepted job is silently dropped and no
+    //   rejected job ever executes.
+    [[nodiscard]] bool Post(std::function<void()> fn);
 
     [[nodiscard]] bool OnLoopThread() const;
 

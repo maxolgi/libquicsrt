@@ -436,20 +436,19 @@ WTClient::~WTClient()
         return; // never connected, or already torn down (OnSessionClosed path)
     }
     assert(!loop_.OnLoopThread()); // never destroy from inside a callback
-    if (loop_.IsRunning())
-    {
-        auto done = teardown_done_.get_future();
-        loop_.Post(
+    auto done = teardown_done_.get_future();
+    if (loop_.Post(
             [this]
             {
                 Teardown({}, false);
                 teardown_done_.set_value();
-            });
+            }))
+    {
         done.wait();
     }
     else
     {
-        Teardown({}, false);
+        Teardown({}, false); // the loop is not running: run it here
     }
 }
 
@@ -481,7 +480,11 @@ bool WTClient::Connect(const Target& target)
     path_      = target.path;
     peer_host_ = target.host;
     authority_ = target.host + ":" + std::to_string(target.port);
-    loop_.Post([this, target] { ConnectOnLoop(target); });
+    if (!loop_.Post([this, target] { ConnectOnLoop(target); }))
+    {
+        state_.store(State::kIdle); // the loop stopped: the connect never starts
+        return false;
+    }
     return true;
 }
 
@@ -592,12 +595,10 @@ bool WTClient::SendDatagram(const void* data, std::size_t size)
     if (loop_.OnLoopThread())
     {
         EnqueueDatagram(std::move(payload));
+        return true;
     }
-    else
-    {
-        loop_.Post([this, payload = std::move(payload)]() mutable { EnqueueDatagram(std::move(payload)); });
-    }
-    return true;
+    // A rejected post means the loop is gone and the datagram never leaves.
+    return loop_.Post([this, payload = std::move(payload)]() mutable { EnqueueDatagram(std::move(payload)); });
 }
 
 void WTClient::EnqueueDatagram(std::vector<std::uint8_t> payload)
@@ -634,7 +635,10 @@ void WTClient::Close()
     }
     else
     {
-        loop_.Post([this] { CloseOnLoop(); });
+        // No synchronous fallback: CloseOnLoop touches the engine, which
+        // belongs to the loop thread. A rejected post means the loop is
+        // gone and the session dies with it.
+        (void)loop_.Post([this] { CloseOnLoop(); });
     }
 }
 
@@ -678,7 +682,8 @@ void WTClient::CloseGracefully(const std::string& reason)
 void WTClient::ScheduleTeardown(const std::string& reason)
 {
     // Deferred: never destroy the engine from inside an engine callback.
-    loop_.Post([this, reason] { Teardown(reason, true); });
+    // (void): on a stopped loop there is nothing left to defer to.
+    (void)loop_.Post([this, reason] { Teardown(reason, true); });
 }
 
 void WTClient::Teardown(const std::string& reason, bool notify)

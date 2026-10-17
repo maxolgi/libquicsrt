@@ -72,9 +72,15 @@ void EventLoop::Start()
 
 void EventLoop::Stop()
 {
-    if (!running_.exchange(false, std::memory_order_acq_rel))
     {
-        return;
+        // Flip under post_mutex_ so Post's accept test is serialized with
+        // the stop: a Post either enqueues before the flip (and the loop's
+        // shutdown drain runs it) or observes the flip and rejects.
+        const std::lock_guard<std::mutex> lock(post_mutex_);
+        if (!running_.exchange(false, std::memory_order_acq_rel))
+        {
+            return;
+        }
     }
     const std::uint64_t one = 1;
     (void)::write(wake_fd_, &one, sizeof one);
@@ -86,14 +92,19 @@ void EventLoop::Stop()
     }
 }
 
-void EventLoop::Post(std::function<void()> fn)
+bool EventLoop::Post(std::function<void()> fn)
 {
     {
         const std::lock_guard<std::mutex> lock(post_mutex_);
+        if (!running_.load(std::memory_order_acquire))
+        {
+            return false;
+        }
         posted_.push_back(std::move(fn));
     }
     const std::uint64_t one = 1;
     (void)::write(wake_fd_, &one, sizeof one);
+    return true;
 }
 
 bool EventLoop::OnLoopThread() const
@@ -198,6 +209,11 @@ void EventLoop::Run()
             break;
         }
     }
+    // Shutdown drain: every job Post accepted was enqueued before running_
+    // flipped false (the flip and Post's accept test share post_mutex_), so
+    // a final RunPosted runs them all before the thread exits — accepted
+    // means the job will run, rejected means it never will.
+    RunPosted();
 }
 
 int EventLoop::SleepTimeoutMs()

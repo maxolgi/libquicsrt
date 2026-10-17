@@ -52,7 +52,7 @@ int main()
         websrt::EventLoop loop;
         std::atomic<bool> posted{false};
         loop.Start();
-        loop.Post([&posted] { posted = true; });
+        check(loop.Post([&posted] { posted = true; }), "EventLoop Post accepted");
         for (int i = 0; i < 500 && !posted; ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         check(posted, "EventLoop Post ran on the loop thread");

@@ -1,8 +1,8 @@
-// EventLoop units: cross-thread Post, fd registration and wakeup, one-shot
-// and repeating timers with cancellation, EngineHost tick driving, and Stop
-// from inside a callback. Plain checks (not assert) so Release stays
-// meaningful; every wait is bounded so a broken loop fails instead of
-// hanging.
+// EventLoop units: cross-thread Post (accept/reject contract and a
+// post-vs-Stop race), fd registration and wakeup, one-shot and repeating
+// timers with cancellation, EngineHost tick driving, and Stop from inside a
+// callback. Plain checks (not assert) so Release stays meaningful; every
+// wait is bounded so a broken loop fails instead of hanging.
 
 #include "core/event_loop.h"
 
@@ -77,12 +77,13 @@ bool TestPostRunsOnLoopThread()
 
     std::atomic<bool>            ran{false};
     std::atomic<std::thread::id> loop_thread{};
-    loop.Post(
-        [&]
-        {
-            loop_thread = std::this_thread::get_id();
-            ran         = true;
-        });
+    Check(loop.Post(
+              [&]
+              {
+                  loop_thread = std::this_thread::get_id();
+                  ran         = true;
+              }),
+          "post while running is accepted");
     if (!Check(WaitFor([&] { return ran.load(); }), "posted functor ran"))
     {
         return false;
@@ -135,7 +136,7 @@ bool TestFdRegistrationAndWake()
         return false;
     }
 
-    loop.Post([&] { loop.DelFd(efd); });
+    Check(loop.Post([&] { loop.DelFd(efd); }), "del-fd post accepted");
     loop.Stop();
     ::close(efd);
     return true;
@@ -205,7 +206,7 @@ bool TestEngineHostDriving()
     loop.Start();
 
     // No tick scheduled: the loop sleeps; Pump only runs when woken.
-    loop.Post([] {});
+    Check(loop.Post([] {}), "wake-only post accepted");
     if (!Check(WaitFor([&] { return host.pumps.load() >= 1; }), "Pump ran on a wake"))
     {
         return false;
@@ -214,7 +215,7 @@ bool TestEngineHostDriving()
     // Overdue tick: the loop spins without sleeping and Pump runs hot. The
     // state change rides a Post, the only cross-thread way an engine host's
     // scheduling can change (the loop samples NextTick just before sleeping).
-    loop.Post([&] { host.scheduled.store(true); });
+    Check(loop.Post([&] { host.scheduled.store(true); }), "schedule post accepted");
     if (!Check(WaitFor([&] { return host.pumps.load() >= 20; }), "overdue tick keeps Pumping"))
     {
         return false;
@@ -222,7 +223,7 @@ bool TestEngineHostDriving()
 
     // Tick far in the future: no iterations, no Pump calls. The grace sleep
     // lets the loop pick the new diff up before sampling.
-    loop.Post([&] { host.diff_us.store(500000); });
+    Check(loop.Post([&] { host.diff_us.store(500000); }), "diff post accepted");
     std::this_thread::sleep_for(std::chrono::milliseconds{10});
     const int before = host.pumps.load();
     std::this_thread::sleep_for(std::chrono::milliseconds{150});
@@ -231,7 +232,7 @@ bool TestEngineHostDriving()
         return false;
     }
 
-    loop.Post([&] { host.scheduled.store(false); });
+    Check(loop.Post([&] { host.scheduled.store(false); }), "unschedule post accepted");
     loop.Stop();
     return true;
 }
@@ -242,15 +243,91 @@ bool TestStopFromCallback()
     loop.Start();
 
     std::atomic<bool> after_stop_ran{false};
-    loop.Post([&] { loop.Stop(); });
+    Check(loop.Post([&] { loop.Stop(); }), "stop post accepted");
     std::this_thread::sleep_for(std::chrono::milliseconds{100});
-    loop.Post([&] { after_stop_ran = true; });
+    Check(!loop.Post([&] { after_stop_ran = true; }), "post after Stop is rejected");
     std::this_thread::sleep_for(std::chrono::milliseconds{100});
     const bool dropped = Check(!after_stop_ran.load(), "functors posted after Stop are dropped");
 
     // The loop thread exited by itself; the destructor must join it without
     // hanging (reaching the end of this function proves it).
     return dropped;
+}
+
+bool TestPostReturnContract()
+{
+    // Never started: the loop is not running, the post is rejected.
+    {
+        EventLoop loop;
+        if (!Check(!loop.Post([] {}), "post to a never-started loop is rejected"))
+        {
+            return false;
+        }
+    }
+
+    // Running: accepted, and the job executes on the loop thread.
+    {
+        EventLoop         loop;
+        std::atomic<bool> ran{false};
+        loop.Start();
+        if (!Check(loop.Post([&] { ran = true; }), "post while running is accepted"))
+        {
+            return false;
+        }
+        if (!Check(WaitFor([&] { return ran.load(); }), "accepted post executed"))
+        {
+            return false;
+        }
+        loop.Stop();
+        if (!Check(!loop.Post([] {}), "post after Stop is rejected"))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TestPostStopRace()
+{
+    // One thread Stops the loop while another posts in a tight loop. Every
+    // Post must return a definite verdict and the verdicts must account for
+    // every execution: an accepted post runs before the loop thread exits
+    // (shutdown drain), a rejected one never runs — so executed must equal
+    // accepted, with neither lost nor duplicated jobs. Post never blocks
+    // indefinitely: it holds post_mutex_ only for a push_back and does one
+    // nonblocking eventfd write, so a concurrent Stop cannot wedge it.
+    constexpr int kRounds        = 200;
+    constexpr int kPostsPerRound = 25;
+    for (int round = 0; round < kRounds; ++round)
+    {
+        EventLoop loop;
+        loop.Start();
+
+        std::atomic<int> executed{0};
+        int              accepted = 0;
+
+        std::thread poster(
+            [&]
+            {
+                for (int i = 0; i < kPostsPerRound; ++i)
+                {
+                    if (loop.Post([&] { executed.fetch_add(1); }))
+                    {
+                        ++accepted;
+                    }
+                }
+            });
+        std::thread stopper([&] { loop.Stop(); });
+
+        poster.join();
+        stopper.join(); // Stop joined the loop thread: executed is final
+
+        if (!Check(executed.load() == accepted, "race: executed posts equal accepted posts"))
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -265,6 +342,8 @@ int main()
 
     const Section sections[] = {
         {.name = "post", .fn = TestPostRunsOnLoopThread},
+        {.name = "post-contract", .fn = TestPostReturnContract},
+        {.name = "post-stop-race", .fn = TestPostStopRace},
         {.name = "fd", .fn = TestFdRegistrationAndWake},
         {.name = "timers", .fn = TestTimers},
         {.name = "engine-host", .fn = TestEngineHostDriving},
