@@ -357,6 +357,15 @@ int ReceiverCore::Read(char* buf, int len, int timeout_ms)
         if (!SetOptInt(sock, SRTO_RCVTIMEO, slice))
         {
             const std::lock_guard<std::mutex> lock(mutex_);
+            // The slice setup can fail because a concurrent Stop/Finalize
+            // closed the socket between the state check and this slice:
+            // classify that as the session's terminal result, exactly
+            // like the connection-lost branch below, instead of erroring
+            // on the invalidated handle.
+            if (local_stop_ || state_ == State::kClosed)
+            {
+                return graceful_ ? kReadEnd : kReadClosed;
+            }
             if (close_reason_.empty())
             {
                 close_reason_ = std::string("SRTO_RCVTIMEO: ") + srt_getlasterror_str();
@@ -412,6 +421,14 @@ int ReceiverCore::Read(char* buf, int len, int timeout_ms)
 
         {
             const std::lock_guard<std::mutex> lock(mutex_);
+            // Same race as the RCVTIMEO slice above: the receive failed
+            // on a handle a concurrent Stop/Finalize closed, so the
+            // result must not depend on which error the invalidated
+            // handle happened to report.
+            if (local_stop_ || state_ == State::kClosed)
+            {
+                return graceful_ ? kReadEnd : kReadClosed;
+            }
             if (close_reason_.empty())
             {
                 close_reason_ = std::string("srt_recvmsg: ") + srt_getlasterror_str();

@@ -8,16 +8,22 @@
 // the first live ACK sample - the same readback M0 does on its caller).
 // The pure selection units (InitialRttSeedMs) cover the publisher half's
 // arithmetic too: its socket application needs a live WebTransport
-// session, but both halves share the one helper.
+// session, but both halves share the one helper. Also gated: the Stop
+// contract - a Read parked on an idle session returns the end-of-stream
+// result when Stop lands on another thread, whichever side of the
+// receive slice the close hits (deterministic plus a raced loop).
 //
 // Plain checks (not assert) so the test stays meaningful in Release.
 
 #include <arpa/inet.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
+#include <thread>
 
 #include "proto/constants.h"
 #include "srt_session/receiver_core.h"
@@ -102,70 +108,105 @@ int CoreSink(void* opaq, const char* data, int len)
                : len;
 }
 
+// One established wire pair: the core (listener half) plus the raw
+// forked-srt caller that drove the handshake. No data flows after the
+// handshake, so a Read has nothing to deliver.
+struct WirePair
+{
+    // Declaration order matters: the core's teardown rides the harness
+    // (the sink dereferences it), so h must outlive core.
+    Harness                               h;
+    std::unique_ptr<websrt::ReceiverCore> core;
+    SRTSOCKET                             caller = SRT_INVALID_SOCK;
+};
+
+// Builds the pair and drives the HSv5 handshake to completion. Returns
+// false (leaving the pair safe for TeardownWirePair) on failure.
+bool EstablishWirePair(WirePair& w, const websrt::ReceiverCoreParams& params, int measured_ms)
+{
+    // The fork's synthesized bind-less listener label (M0's constant);
+    // the caller's fake source label is the core's own peer_label_.
+    w.h.listener_label = FillV4("10.213.255.254", 0);
+
+    w.core   = std::make_unique<websrt::ReceiverCore>(params, &CoreSink, &w.h);
+    w.h.core = w.core.get();
+
+    std::string error;
+    if (!w.core->Start(measured_ms, &error))
+    {
+        Fail("core Start: " + error);
+        return false;
+    }
+
+    w.caller = srt_create_socket();
+    if (w.caller == SRT_INVALID_SOCK)
+    {
+        Fail("srt_create_socket");
+        return false;
+    }
+    bool ok     = true;
+    auto SetOpt = [&ok](SRTSOCKET u, SRT_SOCKOPT opt, int value)
+    { ok = ok && srt_setsockopt(u, 0, opt, &value, sizeof value) != SRT_ERROR; };
+    SetOpt(w.caller, SRTO_SKIP_INDUCTION, 1);
+    SetOpt(w.caller, SRTO_PAYLOADSIZE, 1128);
+    SetOpt(w.caller, SRTO_LATENCY, 120);
+    w.h.caller_vt = srt_attach_virtual_transport(w.caller, CallerSend, &w.h);
+    ok            = ok && w.h.caller_vt != nullptr;
+    if (!ok)
+    {
+        Fail("caller socket setup");
+        return false;
+    }
+
+    if (srt_connect(w.caller, reinterpret_cast<const sockaddr*>(&w.h.listener_label), sizeof w.h.listener_label) ==
+        SRT_ERROR)
+    {
+        Fail(std::string("srt_connect: ") + srt_getlasterror_str());
+        return false;
+    }
+
+    if (!w.core->WaitEstablished(kTimeoutMs, &error))
+    {
+        Fail("core WaitEstablished: " + (error.empty() ? "timeout" : error));
+        return false;
+    }
+    return true;
+}
+
+// Teardown in the M0 order: caller socket first (its shutdown rides
+// InjectDatagram into the still-open core), then the core's Finalize
+// (closes the core's sockets through the sink into the caller's
+// still-live transport handle), the caller transport released last.
+void TeardownWirePair(WirePair& w)
+{
+    if (w.caller != SRT_INVALID_SOCK)
+    {
+        srt_close(w.caller);
+    }
+    if (w.core)
+    {
+        w.core->Finalize();
+    }
+    if (w.h.caller_vt != nullptr)
+    {
+        srt_virtual_transport_release(w.h.caller_vt);
+    }
+}
+
 // Runs one handshake with the given configured/measured RTT pair and
 // returns the accepted socket's pre-data msRTT (the applied seed), or a
 // negative value after reporting the failure.
 double AcceptedSeedMs(int configured_ms, int measured_ms)
 {
-    Harness h;
-    // The fork's synthesized bind-less listener label (M0's constant);
-    // the caller's fake source label is the core's own peer_label_.
-    h.listener_label = FillV4("10.213.255.254", 0);
-
+    WirePair                   w;
     websrt::ReceiverCoreParams params;
     params.initial_rtt_ms = configured_ms;
 
-    websrt::ReceiverCore core(params, &CoreSink, &h);
-    h.core = &core;
-
-    std::string error;
-    if (!core.Start(measured_ms, &error))
-    {
-        Fail("core Start: " + error);
-        return -1.0;
-    }
-
-    SRTSOCKET caller = srt_create_socket();
-    if (caller == SRT_INVALID_SOCK)
-    {
-        Fail("srt_create_socket");
-        core.Finalize();
-        return -1.0;
-    }
-    bool ok     = true;
-    auto SetOpt = [&ok](SRTSOCKET u, SRT_SOCKOPT opt, int value)
-    { ok = ok && srt_setsockopt(u, 0, opt, &value, sizeof value) != SRT_ERROR; };
-    SetOpt(caller, SRTO_SKIP_INDUCTION, 1);
-    SetOpt(caller, SRTO_PAYLOADSIZE, 1128);
-    SetOpt(caller, SRTO_LATENCY, 120);
-    h.caller_vt = srt_attach_virtual_transport(caller, CallerSend, &h);
-    ok          = ok && h.caller_vt != nullptr;
-    if (!ok)
-    {
-        Fail("caller socket setup");
-        srt_close(caller);
-        core.Finalize();
-        return -1.0;
-    }
-
-    if (srt_connect(caller, reinterpret_cast<const sockaddr*>(&h.listener_label), sizeof h.listener_label) == SRT_ERROR)
-    {
-        Fail(std::string("srt_connect: ") + srt_getlasterror_str());
-        srt_close(caller);
-        srt_virtual_transport_release(h.caller_vt);
-        core.Finalize();
-        return -1.0;
-    }
-
     double ms_rtt = -1.0;
-    if (!core.WaitEstablished(kTimeoutMs, &error))
-    {
-        Fail("core WaitEstablished: " + (error.empty() ? "timeout" : error));
-    }
-    else
+    if (EstablishWirePair(w, params, measured_ms))
     {
         SRT_TRACEBSTATS st;
-        if (!core.Stats(&st))
+        if (!w.core->Stats(&st))
         {
             Fail("core Stats: no connected socket");
         }
@@ -174,14 +215,7 @@ double AcceptedSeedMs(int configured_ms, int measured_ms)
             ms_rtt = st.msRTT;
         }
     }
-
-    // Teardown in the M0 order: caller socket first (its shutdown rides
-    // InjectDatagram into the still-open core), then the core's Finalize
-    // (closes the core's sockets through the sink into the caller's
-    // still-live transport handle), the caller transport released last.
-    srt_close(caller);
-    core.Finalize();
-    srt_virtual_transport_release(h.caller_vt);
+    TeardownWirePair(w);
     return ms_rtt;
 }
 
@@ -204,6 +238,79 @@ void SessionSeed()
     }
 }
 
+// ---- (3) Stop vs in-flight Read ----
+
+// A Read parked on an idle established session must come back with the
+// end-of-stream result when Stop (Finalize) lands on another thread -
+// whichever side of the receive slice the close hits.
+void StopUnblocksRead()
+{
+    WirePair                   w;
+    websrt::ReceiverCoreParams params;
+    int                        read_result = websrt::ReceiverCore::kReadInvalidArg;
+    if (!EstablishWirePair(w, params, 0))
+    {
+        TeardownWirePair(w);
+        return;
+    }
+
+    std::atomic<bool> reading{false};
+    char              buf[websrt::kSrtPayloadSize];
+    std::thread       reader(
+        [&]
+        {
+            reading.store(true);
+            read_result = w.core->Read(buf, static_cast<int>(sizeof buf), kTimeoutMs);
+        });
+    // Park the reader inside a bounded receive slice first.
+    while (!reading.load())
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    w.core->Finalize(); // the facade's Stop
+    reader.join();
+    const std::string reason = w.core->close_reason();
+    TeardownWirePair(w);
+
+    Check([&] { return read_result == websrt::ReceiverCore::kReadEnd; },
+          "blocked Read interrupted by Stop returns end (got " + std::to_string(read_result) + ")");
+    Check([&] { return reason == "stopped locally"; },
+          "blocked Read interrupted by Stop keeps the local-stop reason (got \"" + reason + "\")");
+}
+
+// Races Stop against a Read across the bounded-slice schedule: the
+// close lands before the Read starts, during the slice setup, parked
+// inside a receive slice, or around a slice boundary, and every
+// interleaving must report the end.
+void StopReadRace()
+{
+    // Head starts sweeping the 250 ms slice schedule of an 800 ms Read.
+    constexpr int kHeadStartsMs[] = {0, 1, 3, 10, 40, 150, 260, 400};
+    for (const int head_start_ms : kHeadStartsMs)
+    {
+        WirePair                   w;
+        websrt::ReceiverCoreParams params;
+        int                        read_result = websrt::ReceiverCore::kReadInvalidArg;
+        if (!EstablishWirePair(w, params, 0))
+        {
+            TeardownWirePair(w);
+            return;
+        }
+
+        char        buf[websrt::kSrtPayloadSize];
+        std::thread reader([&] { read_result = w.core->Read(buf, static_cast<int>(sizeof buf), 800); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(head_start_ms));
+        w.core->Finalize();
+        reader.join();
+        TeardownWirePair(w);
+
+        Check([&] { return read_result == websrt::ReceiverCore::kReadEnd; },
+              "raced Stop vs Read (head start " + std::to_string(head_start_ms) + " ms) returns end (got " +
+                  std::to_string(read_result) + ")");
+    }
+}
+
 } // namespace
 
 int main()
@@ -216,6 +323,8 @@ int main()
 
     SelectionUnits();
     SessionSeed();
+    StopUnblocksRead();
+    StopReadRace();
 
     srt_cleanup();
     if (!g_ok)
