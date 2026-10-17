@@ -29,6 +29,19 @@
 // Buffer depth mirrors the browser receiver: latency-scaled packets count
 // clamp(latency_ms * 40, 8192, 320000) for both directions.
 //
+// Send path: SendMessage (the app thread, beside Read) publishes on the
+// same accepted socket - the browser engine's publish direction. Each
+// call splits the buffer into messages of at most the NEGOTIATED payload
+// (the accept thread's HSv5 readback: effectively 940 = 5 x 188, not the
+// configured 1128), each its own srt message; no remainder carries
+// across calls. Returns the bytes accepted (a partial count when the
+// deadline or the session gave out midway - the caller resumes from
+// buf + returned), 0 for an empty buffer (nothing emitted), or a
+// SendResult status. A full send buffer blocks a chunk bounded by
+// SRTO_SNDTIMEO (the call's remaining deadline); Finalize's socket close
+// wakes an in-flight send with SRT_ECONNLOST, so Stop stays prompt (the
+// publisher's SendOne lesson).
+//
 // THREADS AND TEARDOWN ORDER (three thread domains touch this object):
 //
 //   1. Driver thread  - the transport owner's callbacks: Start (listener
@@ -46,8 +59,8 @@
 //                      handshake retransmit flood while the thread is
 //                      parked in srt_accept is harmless: srt answers every
 //                      copy and dedups the connection.
-//   4. App thread    - WaitEstablished/Read/Stats/MarkLocalStop/Finalize
-//                      of the owning facade.
+//   4. App thread    - WaitEstablished/Read/SendMessage/Stats/
+//                      MarkLocalStop/Finalize of the owning facade.
 //
 // Lifetime rules enforced here:
 //   - Every shared field lives under mutex_; cv_ covers state transitions.
@@ -122,6 +135,18 @@ public:
         kReadError      = -5, // srt-level error (see close_reason)
     };
 
+    // Send outcomes; positive values carry the accepted byte count (0 is
+    // not a status - an empty buffer is a no-op), so SendMessage() returns
+    // plain int and these are its documented constants.
+    enum SendResult
+    {
+        kSendTimeout       = -1, // send buffer stayed full until the deadline; call again
+        kSendClosed        = -2, // session ended (close_reason has why)
+        kSendNotHandshaked = -3, // no connected accepted socket yet
+        kSendInvalidArg    = -4,
+        kSendError         = -5, // srt-level error (see close_reason)
+    };
+
     // `sink`/`sink_opaq` must outlive this object.
     explicit ReceiverCore(ReceiverCoreParams params, DatagramSink sink, void* sink_opaq);
     ~ReceiverCore();
@@ -169,8 +194,17 @@ public:
     // call responsive to a stop from another thread.
     int Read(char* buf, int len, int timeout_ms);
 
-    // Snapshots the accepted socket's stats (srt_bstats, no clear).
-    // False when there is no connected accepted socket.
+    // Sends len bytes out on the accepted socket: the call frames them
+    // into messages of at most the negotiated payload size, each its own
+    // srt message, and never carries a remainder across calls. Returns
+    // the bytes accepted (a partial count when the deadline or the
+    // session gave out midway - resume from buf + returned), 0 for
+    // len == 0 (nothing is emitted), or a SendResult status. timeout_ms
+    // bounds the whole call (0 = one send attempt).
+    int SendMessage(const char* buf, int len, int timeout_ms);
+
+    // Snapshots the accepted socket's stats (srt_bistats instantaneous,
+    // no clear). False when there is no connected accepted socket.
     bool Stats(SRT_TRACEBSTATS* out);
 
     // Local stop marker: the next Shutdown (or Finalize) never defers
@@ -230,6 +264,11 @@ private:
     SRTSOCKET               accepted_ = SRT_INVALID_SOCK;
     SRTVirtualTransport*    vt_       = nullptr;
     std::thread             accept_thread_;
+
+    // Effective payload size after the HSv5 negotiation (the accept
+    // thread's readback, publisher.cpp's negotiated-payload lesson):
+    // SendMessage frames to this, not params_.payload_size.
+    int negotiated_payload_ = kSrtPayloadSize;
 
     // Drain window on a graceful peer end: Read may keep delivering the
     // accepted socket's buffered messages until this point (TSBPD latency

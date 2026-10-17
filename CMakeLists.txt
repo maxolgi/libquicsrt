@@ -109,7 +109,10 @@ if(WEBSRT_RECEIVER_ONLY)
     # returns; its consumer (websrt-wasm-cpp under Emscripten) carries its
     # own build gates.
     add_library(websrt_receiver_core STATIC
-        src/srt_session/receiver_core.cpp)
+        src/srt_session/receiver_core.cpp
+        # SendMessage's negotiated-payload readback (see negotiate.h);
+        # the send path genuinely needs the second file.
+        src/srt_session/negotiate.cpp)
     add_library(websrt::receiver-core ALIAS websrt_receiver_core)
     target_compile_features(websrt_receiver_core PUBLIC cxx_std_20)
     set_target_properties(websrt_receiver_core PROPERTIES CXX_EXTENSIONS OFF)

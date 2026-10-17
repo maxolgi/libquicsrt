@@ -4,6 +4,8 @@
 #include <cstring>
 #include <utility>
 
+#include "srt_session/negotiate.h"
+
 namespace websrt
 {
 
@@ -233,8 +235,12 @@ void ReceiverCore::AcceptThread(SRTSOCKET listener)
             // closing thread records the reason.
             return;
         }
-        accepted_ = accepted;
-        state_    = State::kConnected;
+        // The handshake negotiates min(gateway, listener) payload: sends
+        // frame to the negotiated size, not the configured one (the
+        // publisher's readback; see negotiate.h).
+        negotiated_payload_ = NegotiatePayload(accepted, params_.payload_size);
+        accepted_           = accepted;
+        state_              = State::kConnected;
     }
     cv_.notify_all();
 }
@@ -452,6 +458,123 @@ int ReceiverCore::Read(char* buf, int len, int timeout_ms)
     }
 }
 
+int ReceiverCore::SendMessage(const char* buf, int len, int timeout_ms)
+{
+    if (buf == nullptr || len < 0)
+    {
+        return kSendInvalidArg;
+    }
+    if (len == 0)
+    {
+        return 0; // no-op: nothing is emitted
+    }
+    timeout_ms          = std::max(timeout_ms, 0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+
+    int sent = 0; // bytes accepted into srt messages this call
+    for (bool first = true; sent < len; first = false)
+    {
+        SRTSOCKET sock    = SRT_INVALID_SOCK;
+        int       payload = 0;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            if (state_ == State::kClosed)
+            {
+                return sent > 0 ? sent : kSendClosed;
+            }
+            if (state_ != State::kConnected)
+            {
+                return sent > 0 ? sent : kSendNotHandshaked;
+            }
+            sock    = accepted_;
+            payload = negotiated_payload_;
+        }
+
+        // Budget: the first chunk always gets a slice (poll semantics),
+        // later ones only while the deadline has room. SRTO_SNDTIMEO
+        // bounds the blocking part (a full send buffer); Finalize's
+        // socket close wakes an in-flight send with SRT_ECONNLOST, so
+        // Stop stays prompt without send slicing.
+        const auto now = std::chrono::steady_clock::now();
+        int slice = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+        if (!first && slice <= 0)
+        {
+            return sent;
+        }
+        slice = std::max(slice, 1);
+
+        const int n = std::min(len - sent, payload);
+        if (!SetOptInt(sock, SRTO_SNDTIMEO, slice))
+        {
+            // The slice setup can fail because a concurrent Stop/Finalize
+            // closed the socket between the state check and this chunk:
+            // the state change, not the invalidated handle, classifies it
+            // (the Read slice-setup race).
+            const std::lock_guard<std::mutex> lock(mutex_);
+            if (sent > 0)
+            {
+                return sent;
+            }
+            if (state_ == State::kClosed)
+            {
+                return kSendClosed;
+            }
+            if (close_reason_.empty())
+            {
+                close_reason_ = std::string("SRTO_SNDTIMEO: ") + srt_getlasterror_str();
+            }
+            return kSendError;
+        }
+
+        const int r = srt_sendmsg2(sock, buf + sent, n, nullptr);
+        if (r == n)
+        {
+            sent += n;
+            continue;
+        }
+
+        // Send failure. The state change wins (the session closed under
+        // us); otherwise srt's error class picks the code.
+        int error = 0;
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            if (state_ == State::kClosed)
+            {
+                error = SRT_ECONNLOST;
+            }
+        }
+        if (error == 0)
+        {
+            error = srt_getlasterror(nullptr);
+        }
+        if (sent > 0)
+        {
+            return sent; // partial progress: the caller resumes from buf + sent
+        }
+        if (error == SRT_ETIMEOUT)
+        {
+            return kSendTimeout;
+        }
+        if (error == SRT_ECONNLOST || error == SRT_ESCLOSED || error == SRT_ENOCONN)
+        {
+            return kSendClosed;
+        }
+        if (error == SRT_ELARGEMSG)
+        {
+            return kSendInvalidArg;
+        }
+        {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            if (close_reason_.empty())
+            {
+                close_reason_ = std::string("srt_sendmsg2: ") + srt_getlasterror_str();
+            }
+        }
+        return kSendError;
+    }
+    return sent;
+}
+
 bool ReceiverCore::Stats(SRT_TRACEBSTATS* out)
 {
     SRTSOCKET sock = SRT_INVALID_SOCK;
@@ -463,7 +586,10 @@ bool ReceiverCore::Stats(SRT_TRACEBSTATS* out)
         }
         sock = accepted_;
     }
-    return srt_bstats(sock, out, 0) == 0;
+    // Instantaneous: the send-buffer fields (the browser receiver's
+    // txBuffered = pktSndBuf) must be a raw snapshot - plain srt_bstats
+    // IIR-smooths them (the publisher's StatsInstant lesson).
+    return srt_bistats(sock, out, 0, 1) == 0;
 }
 
 void ReceiverCore::MarkLocalStop()
