@@ -125,7 +125,8 @@ if(WEBSRT_BUILD_SHARED)
         src/core/event_loop.cpp
         src/core/version.cpp
         src/srt_session/receiver_core.cpp
-        src/wt/capsule.cpp)
+        src/wt/capsule.cpp
+        src/wt/connect_response.cpp)
     set_target_properties(websrt PROPERTIES
         VERSION ${PROJECT_VERSION}
         SOVERSION ${PROJECT_VERSION_MAJOR})
@@ -138,7 +139,8 @@ else()
         src/core/event_loop.cpp
         src/core/version.cpp
         src/srt_session/receiver_core.cpp
-        src/wt/capsule.cpp)
+        src/wt/capsule.cpp
+        src/wt/connect_response.cpp)
 endif()
 add_library(websrt::websrt ALIAS websrt)
 target_compile_features(websrt PUBLIC cxx_std_20)
@@ -241,6 +243,17 @@ target_include_directories(capsule_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(capsule_test PRIVATE websrt_warnings websrt Threads::Threads)
 add_test(NAME capsule_test COMMAND capsule_test)
 set_tests_properties(capsule_test PROPERTIES TIMEOUT 30)
+
+# ConnectResponseParser units: the bounded extended-CONNECT response-
+# head accumulation (64 KiB ceiling, status-line parsing), pure parsing
+# (no WebTransport needed, runs on the WT-off fast path too).
+add_executable(connect_response_test tests/connect_response_test.cpp)
+target_compile_features(connect_response_test PRIVATE cxx_std_20)
+set_target_properties(connect_response_test PROPERTIES CXX_EXTENSIONS OFF)
+target_include_directories(connect_response_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(connect_response_test PRIVATE websrt_warnings websrt Threads::Threads)
+add_test(NAME connect_response_test COMMAND connect_response_test)
+set_tests_properties(connect_response_test PROPERTIES TIMEOUT 30)
 endif()
 
 # M0 loopback: two forked srt sockets over an in-memory wire pair (gated

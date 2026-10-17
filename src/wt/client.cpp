@@ -659,9 +659,9 @@ void WTClient::CloseOnLoop()
 void WTClient::CloseGracefully(const std::string& reason)
 {
     const State state = state_.load();
-    if (state == State::kClosed)
+    if (state == State::kClosed || state == State::kClosing)
     {
-        return;
+        return; // a close is already in flight; the first reason wins
     }
     if (conn_ != nullptr)
     {
@@ -798,32 +798,62 @@ void WTClient::ReadSessionStream(lsquic_stream_t* stream)
         {
             if (!headers_done_)
             {
-                session_buf_.insert(session_buf_.end(), buf, buf + n);
-                const std::size_t consumed = ParseResponseHeaders();
-                if (consumed > 0)
+                const std::size_t consumed = response_parser_.Feed(buf, static_cast<std::size_t>(n));
+                if (response_parser_.overflow())
                 {
-                    headers_done_ = true;
-                    capsule_parser_.Feed(session_buf_.data() + consumed, session_buf_.size() - consumed);
-                    session_buf_.clear();
-                    NotifyCapsuleClose();
-                    if (http_status_.load() == 200)
-                    {
-                        state_.store(State::kConnected);
-                        listener_.OnSessionReady();
-                    }
-                    else
-                    {
-                        // The connection is live: close it gracefully so
-                        // the gateway sees CONNECTION_CLOSE instead of
-                        // holding a zombie until its idle timeout.
-                        CloseGracefully("HTTP status " + std::to_string(http_status_.load()));
-                    }
+                    // A gateway that never terminates its header block
+                    // must not grow the client's buffer without limit.
+                    CloseGracefully(std::string("response header block exceeded ") +
+                                    std::to_string(ConnectResponseParser::kMaxHeaderBytes) +
+                                    " bytes without a terminator");
+                    break;
+                }
+                if (consumed == 0)
+                {
+                    continue; // header block still incomplete
+                }
+                headers_done_    = true;
+                const int status = response_parser_.status();
+                http_status_.store(status);
+                if (status >= 0)
+                {
+                    Log("session response: \"%s\" -> %d", response_parser_.status_line().c_str(), status);
+                }
+                capsule_parser_.Feed(buf + consumed, static_cast<std::size_t>(n) - consumed);
+                NotifyCapsuleClose();
+                if (status == 200)
+                {
+                    state_.store(State::kConnected);
+                    listener_.OnSessionReady();
+                }
+                else if (status >= 0)
+                {
+                    // The connection is live: close it gracefully so
+                    // the gateway sees CONNECTION_CLOSE instead of
+                    // holding a zombie until its idle timeout.
+                    CloseGracefully("HTTP status " + std::to_string(status));
+                }
+                else
+                {
+                    CloseGracefully("unparseable response status line: \"" + response_parser_.status_line() + "\"");
                 }
             }
             else
             {
                 capsule_parser_.Feed(buf, static_cast<std::size_t>(n));
                 NotifyCapsuleClose();
+            }
+            if (state_.load() == State::kConnected && capsule_parser_.overflow())
+            {
+                // The parser stays bounded (it drops bytes once
+                // overflowed), but the framing is untrustworthy: tear
+                // the session down instead of lingering connected but
+                // dead. The kConnected guard keeps an earlier, more
+                // precise close reason (e.g. an HTTP status)
+                // authoritative.
+                CloseGracefully(std::string("session stream capsule framing demanded more than ") +
+                                std::to_string(WtCapsuleParser::kMaxPendingBytes) + " pending bytes");
+                break;
             }
             continue;
         }
@@ -853,39 +883,6 @@ void WTClient::ReadSessionStream(lsquic_stream_t* stream)
         }
         break;
     }
-}
-
-// With the built-in (HTTP/1.x) header interface the response pseudo-headers
-// arrive as a "HTTP/1.1 200 ..." status line followed by regular headers and
-// a blank line; anything after that is the session stream's capsule stream.
-std::size_t WTClient::ParseResponseHeaders()
-{
-    constexpr std::string_view kTerm = "\r\n\r\n";
-    const auto                 found = std::ranges::search(session_buf_, kTerm);
-    if (found.empty())
-    {
-        return 0;
-    }
-    const std::size_t consumed = static_cast<std::size_t>(found.begin() - session_buf_.begin()) + 4;
-
-    const auto        line_end = std::ranges::find(session_buf_, '\r');
-    char              line[32] = {};
-    const std::size_t line_len =
-        std::min<std::size_t>(static_cast<std::size_t>(line_end - session_buf_.begin()), sizeof line - 1);
-    std::memcpy(line, session_buf_.data(), line_len);
-    int  status      = -1;
-    char version[16] = {};
-    if (2 == std::sscanf(line, "%15s %d", version, &status))
-    {
-        http_status_.store(status);
-        Log("session response: \"%s\" -> %d", line, status);
-    }
-    else
-    {
-        CloseGracefully(std::string("unparseable response status line: \"") + line + "\"");
-        return consumed;
-    }
-    return consumed;
 }
 
 // Terminal stream notification for a consumed CLOSE capsule: the parser's

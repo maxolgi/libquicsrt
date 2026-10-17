@@ -24,6 +24,7 @@
 #include "core/event_loop.h"
 #include "proto/constants.h"
 #include "wt/capsule.h"
+#include "wt/connect_response.h"
 
 struct lsquic_engine;
 struct lsquic_conn;
@@ -146,7 +147,9 @@ private:
     void CloseOnLoop();
     // Graceful teardown from a live connection: stashes `reason` for the
     // eventual OnSessionClosed, sends CONNECTION_CLOSE, and lets the
-    // on_conn_closed path run the teardown. Instant ScheduleTeardown is
+    // on_conn_closed path run the teardown. No-op once a close is in
+    // flight: the first stashed reason is the one reported. Instant
+    // ScheduleTeardown is
     // reserved for engines with no live connection - destroying an engine
     // with a live connection never tells the peer, leaving it a zombie
     // until its idle timeout.
@@ -160,9 +163,6 @@ private:
     void    ReadSessionStream(lsquic_stream_t* stream);
     void    OnDatagramFromEngine(const void* buf, std::size_t size);
     ssize_t OnDgWriteFromEngine(void* buf, std::size_t size);
-    // Returns the bytes consumed by the response header block, 0 when the
-    // terminator has not arrived yet; sets http_status_.
-    std::size_t ParseResponseHeaders();
     // Terminal stream notification for a consumed CLOSE capsule; fires at
     // most once per session.
     void NotifyCapsuleClose();
@@ -187,13 +187,13 @@ private:
     sockaddr_in    local_sa_{};
     sockaddr_in    peer_sa_{};
 
-    std::uint64_t             stream_id_       = UINT64_MAX;
-    bool                      headers_sent_    = false;
-    bool                      headers_done_    = false;
-    bool                      stream_terminal_ = false;
-    std::string               pending_close_reason_; // CloseGracefully's stashed reason
-    std::vector<std::uint8_t> session_buf_;          // response-header accumulation only, until headers_done_
-    WtCapsuleParser           capsule_parser_;       // session-stream capsule bytes
+    std::uint64_t         stream_id_       = UINT64_MAX;
+    bool                  headers_sent_    = false;
+    bool                  headers_done_    = false;
+    bool                  stream_terminal_ = false;
+    std::string           pending_close_reason_; // CloseGracefully's stashed reason
+    ConnectResponseParser response_parser_;      // response-head accumulation until headers_done_
+    WtCapsuleParser       capsule_parser_;       // session-stream capsule bytes
 
     std::deque<std::vector<std::uint8_t>> send_queue_;
     std::size_t                           datagram_write_size_ = 0;
