@@ -117,8 +117,9 @@ upgrades = fetch upstream, rebase `websrt` onto master, re-verify the
 gate-OFF stock build, then bump the submodule pin. The goal is an
 upstreamable PR — keep the rebase clean. The branch carries the seam, the
 Conclusion-first handshake support, and the RTT seed — all config-gated
-(upstream UDP behavior unchanged); the listener side binds a label address
-explicitly before `srt_listen` (no bind-less listen in the fork). Current
+(upstream UDP behavior unchanged); `srt_listen` is bind-less for
+virtual-transport sockets (a label binding is synthesized when the socket
+is still unbound, so libwebsrt's explicit `srt_bind()` also works). Current
 shape (see `git -C deps/srt log 9f23902..websrt`):
 
 1. Virtual transport seam behind `CChannel` (sendto→callback; portable
