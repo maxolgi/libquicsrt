@@ -2,8 +2,8 @@
 // from SubscriberSession - the native analogue of the browser-side
 // srt-wasm SrtReceiver (WebSRT crates/srt-wasm/src/lib.rs). The peer is
 // the SRT initiator (caller); this core is the listener: on Start it
-// creates one forked-srt socket in virtual-transport mode, puts it into
-// the listening state WITHOUT a bind (the fork synthesizes the label),
+// creates one forked-srt socket in virtual-transport mode, binds it to
+// a label address, puts it into the listening state,
 // and answers the HSv5 Conclusion-first handshake the initiator floods
 // every ~2 ms. Incoming datagrams are injected into the srt receive
 // queue with a stable fake source label; outgoing srt datagrams

@@ -2,8 +2,8 @@
 // publisher (WebSRT web/src/worker.ts driving crates/srt-wasm). The
 // gateway is the SRT initiator (caller) for EVERY session, publisher
 // included: on WT session ready this session creates one forked-srt
-// socket in virtual-transport mode, puts it into the listening state
-// WITHOUT a bind (the fork synthesizes the label), and answers the HSv5
+// socket in virtual-transport mode, binds it to a label address, puts
+// it into the listening state, and answers the HSv5
 // Conclusion-first handshake the gateway floods every ~2 ms - the same
 // listener half as the subscriber. The difference is the data plane
 // direction: once accepted, the socket is the SENDER, and the gateway's

@@ -115,16 +115,21 @@ committed to directly) — local clone `~/maxolgi/WebSRT-cpp/srt` (do NOT edit
 git will clobber it). Pin policy: **the base tracks upstream/master head**;
 upgrades = fetch upstream, rebase `websrt` onto master, re-verify the
 gate-OFF stock build, then bump the submodule pin. The goal is an
-upstreamable PR — keep the rebase clean. Six config-gated patches (upstream
-UDP behavior unchanged) — five code patches plus one verified-upstream no-op:
+upstreamable PR — keep the rebase clean. The branch carries the seam, the
+Conclusion-first handshake support, and the RTT seed — all config-gated
+(upstream UDP behavior unchanged); the listener side binds a label address
+explicitly before `srt_listen` (no bind-less listen in the fork). Current
+shape (see `git -C deps/srt log 9f23902..websrt`):
 
-1. Virtual transport seam behind `CChannel` (sendto→callback, eventfd wake
-   replaces `select()`-on-UDP)
-2. Attached-socket mode (per-WT-session sockets without bind/listen)
-3. `SRTO_SKIP_INDUCTION` caller (Conclusion-first, cookie=0)
-4. Listener accepts Conclusion-first (`processConnectRequest`)
-5. `SRTO_INITIAL_RTT` (seed RTT estimator from QUIC stats)
-6. Sender too-late retransmit skip — verified present in upstream v1.5.7
+1. Virtual transport seam behind `CChannel` (sendto→callback; portable
+   condvar wake replaces `select()`-on-UDP — no eventfd anywhere)
+2. `SRTO_SKIP_INDUCTION` caller (Conclusion-first, cookie=0), listener
+   accepts Conclusion-first (`processConnectRequest`), cookie bypass
+   restricted to virtual transport, connector unregistered on early
+   startConnect refusals
+3. `SRTO_INITIAL_RTT` (seed RTT estimator from QUIC stats)
+4. Emscripten build enablement (`LINUX=1` platform arm, musl endian.h)
+5. Sender too-late retransmit skip — verified present in upstream v1.5.7
    (buffer-state: `sndDropTooLate` purges loss list; dropped-seq NAK →
    DROPREQ); no patch needed, gate-ON test added
 

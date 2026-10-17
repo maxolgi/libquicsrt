@@ -206,9 +206,9 @@ bool SetOptI64(SRTSOCKET u, SRT_SOCKOPT opt, int64_t value)
     return srt_setsockopt(u, 0, opt, &value, sizeof value) != SRT_ERROR;
 }
 
-// (a) Handshake: skip-induction caller (Conclusion-first) against an attached
-// listener put into the listening state with NO explicit bind - the fork
-// synthesizes the label the caller then connects to.
+// (a) Handshake: skip-induction caller (Conclusion-first) against an
+// attached listener explicitly bound to a label address the caller then
+// connects to.
 bool ConnectPair(Session& s, const sockaddr_in& listener_label, const sockaddr_in& caller_addr)
 {
     const int yes = 1;
@@ -220,6 +220,7 @@ bool ConnectPair(Session& s, const sockaddr_in& listener_label, const sockaddr_i
     CHECK(SetOptInt(s.listener, SRTO_LATENCY, kLatencyMs));
     s.listener_vt = srt_attach_virtual_transport(s.listener, WireSend, &s.listener_wire);
     CHECK(s.listener_vt != nullptr);
+    CHECK(srt_bind(s.listener, (const sockaddr*)&listener_label, (int)sizeof listener_label) != SRT_ERROR);
     CHECK(srt_listen(s.listener, 5) != SRT_ERROR);
 
     s.caller = srt_create_socket();
@@ -363,7 +364,7 @@ int main()
 
     const int fds_before = CountSocketFds();
 
-    // The label synthesized by the fork's bind-less listen; the fake caller
+    // The label address the attached listener is bound to; the fake caller
     // address the accepted socket will report as its peer.
     const sockaddr_in listener_label = FillV4("10.213.255.254", 0);
     const sockaddr_in caller_addr    = FillV4("10.220.0.1", 5556);

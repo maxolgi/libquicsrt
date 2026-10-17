@@ -98,8 +98,19 @@ bool ReceiverCore::Start(int measured_rtt_ms, std::string* error)
             break;
         }
 
-        // No bind: the fork synthesizes the listener label and every
-        // attached socket owns a dedicated multiplexer.
+        // Bind the listener to a label address before listening: attached
+        // sockets get a dedicated multiplexer and dispatch never happens
+        // by address, so the label is only what srt_getsockname reports.
+        sockaddr_in label_addr;
+        std::memset(&label_addr, 0, sizeof label_addr);
+        label_addr.sin_family      = AF_INET;
+        label_addr.sin_addr.s_addr = inet_addr("10.213.255.254");
+        if (srt_bind(listener, (sockaddr*)&label_addr, (int)sizeof label_addr) == SRT_ERROR)
+        {
+            *error = std::string("srt_bind: ") + srt_getlasterror_str();
+            break;
+        }
+
         if (srt_listen(listener, 5) == SRT_ERROR)
         {
             *error = std::string("srt_listen: ") + srt_getlasterror_str();

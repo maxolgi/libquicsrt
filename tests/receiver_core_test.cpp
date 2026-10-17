@@ -124,7 +124,7 @@ struct WirePair
 // false (leaving the pair safe for TeardownWirePair) on failure.
 bool EstablishWirePair(WirePair& w, const websrt::ReceiverCoreParams& params, int measured_ms)
 {
-    // The fork's synthesized bind-less listener label (M0's constant);
+    // The listener label the core binds before listening (a pure label);
     // the caller's fake source label is the core's own peer_label_.
     w.h.listener_label = FillV4("10.213.255.254", 0);
 
