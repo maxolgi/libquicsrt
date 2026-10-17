@@ -27,7 +27,10 @@ namespace
 {
 
 // Bound for how long Stop()/End() waits for the graceful WT close to
-// complete before stopping the loop underneath it.
+// complete before stopping the loop underneath it. Longer than the
+// subscriber's 3000: the publisher's drain also gives the SRT sender time
+// to flush its still-unsent buffer before the WT session dies, instead of
+// truncating the stream tail.
 constexpr int kStopDrainMs = 5000;
 
 } // namespace

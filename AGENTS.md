@@ -102,18 +102,20 @@ their own settings), BoringSSL via lsquic's `LIBSSL_DIR`, nasm.
    libwebsrt are the equivalent of WebSRT's Cargo.lock pinning — new fork
    commits are NOT picked up automatically.
 2. Changing only `include/` / `src/` → `./build.sh lib`, no submodule work.
-3. Changing `src/ffmpeg/` → rebuild the patched FFmpeg (`./build.sh ffmpeg`).
+3. Changing the FFmpeg protocol patch (`examples/ffmpeg/`) → rebuild the
+   patched FFmpeg (`./build.sh ffmpeg`).
 
 ## Forked dependency
 
-**`maxolgi/srt`** (branch: **`websrt`**, cut from upstream **release tag
-`v1.5.7`** — commit `899348d8318eb9a3c5a5b6ec43c4a1114288773a`; the fork's
-`master` stays a clean upstream mirror, never committed to directly) — local
-clone `~/maxolgi/srt` (do NOT edit `deps/srt` directly; it is a submodule checkout and
-git will clobber it). Pin policy: **releases only, never upstream master**
-(FFmpeg-supported line, fewer rebase surprises). Upgrades = fetch the new
-release tag from Haivision upstream, rebase `websrt` onto it, re-verify the
-gate-OFF build, then bump the submodule pin. Six config-gated patches (upstream
+**`maxolgi/srt`** (branch: **`websrt`**, based on **upstream/master head**
+(`9f23902`, self-identifies SRT_VERSION 1.5.7; originally cut from release
+tag `v1.5.7`); the fork's `master` stays a clean upstream mirror, never
+committed to directly) — local clone `~/maxolgi/srt` (do NOT edit
+`deps/srt` directly; it is a submodule checkout and
+git will clobber it). Pin policy: **the base tracks upstream/master head**;
+upgrades = fetch upstream, rebase `websrt` onto master, re-verify the
+gate-OFF stock build, then bump the submodule pin. The goal is an
+upstreamable PR — keep the rebase clean. Six config-gated patches (upstream
 UDP behavior unchanged) — five code patches plus one verified-upstream no-op:
 
 1. Virtual transport seam behind `CChannel` (sendto→callback, eventfd wake
@@ -136,14 +138,15 @@ client side hand-drives extended CONNECT via raw `lsxpack` pseudo-headers.
 ## Workspace structure
 
 - `include/websrt/` — public libwebsrt API (publisher, subscriber, stats, config)
-- `src/wt/` — lsquic wrappers: WT client (extended CONNECT, capsules, datagrams,
-  cert-hash pinning) and WT server (lsquic's supported path)
+- `src/wt/` — lsquic wrappers, client side only (extended CONNECT, capsules,
+  datagrams, cert-hash pinning); the WT server moved to `websrt-gateway-cpp`
 - `src/srt_session/` — srt fork in virtual-transport mode: per-WT-session SRT
   sockets, subscriber/publisher drivers
 - `src/core/` — single epoll event loop (lsquic engine + `srt_epoll` + timers),
   broadcaster ring
-- `src/ffmpeg/` — `websrt://` URLProtocol (input + output)
-- `apps/` — `websrt-dump` (subscribe→file), `websrt-publish-file` (loop a .ts)
+- `examples/ffmpeg/` — the `websrt://` URLProtocol patch applied to upstream
+  FFmpeg (input + output); built by `./build.sh ffmpeg`
+- `apps/` — `websrt-dump` (subscribe→file)
 - `tests/` — M0 loopback (skip-induction over in-memory queue, zero syscalls),
   wt_echo, units
 - `scripts/` — `interop.sh` (drives the Rust WebSRT gateway + fixtures)
@@ -154,9 +157,10 @@ client side hand-drives extended CONNECT via raw `lsxpack` pseudo-headers.
 - **`libwebsrt`** — the embeddable client: Publisher (SRT listener-role +
   sender, `?publish=`) and Subscriber (SRT listener-role + receiver, `?stream=`),
   both over WebTransport datagrams using the forked srt in virtual mode.
-- **ffmpeg** — `websrt://host:port?stream=name[&passphrase=…]` as input and
+- **ffmpeg** — `websrt://host:port?stream=name` as input and
   output against upstream FFmpeg; blocking façade over the event-loop thread;
-  TS chunking 188-aligned, ≤ 1128-byte SRT payloads.
+  TS chunking 188-aligned, ≤ 1128-byte SRT payloads. (No `passphrase=`
+  parameter — crypto is OFF by design.)
 
 ## Protocol constants & inherited behaviors
 

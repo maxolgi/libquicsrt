@@ -3,9 +3,6 @@
 namespace websrt
 {
 
-// The bodies are moved semantics-identical from src/wt/client.cpp (whose
-// anonymous-namespace originals keep internal linkage there).
-
 std::size_t VarintPut(std::uint8_t* dst, std::uint64_t v)
 {
     if (v < 0x40)

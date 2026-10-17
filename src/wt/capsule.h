@@ -1,9 +1,8 @@
 // WT capsule framing (RFC 9599) over a stream: QUIC varint (RFC 9000
-// s.16) encoded type + length prefixes followed by the payload. This is
-// the WTClient session-stream receive side lifted out of src/wt/client.cpp
-// as pure buffering logic - no sockets, no locking, no listener - which is
-// what the unit tests drive. The client keeps its own internal-linkage
-// copies for now; call sites migrate to this class incrementally.
+// s.16) encoded type + length prefixes followed by the payload. Pure
+// buffering logic - no sockets, no locking, no listener - which is what
+// the unit tests drive. This is the sole implementation; WTClient and
+// external consumers (the gateway) link against it.
 
 #ifndef WEBSRT_WT_CAPSULE_H
 #define WEBSRT_WT_CAPSULE_H

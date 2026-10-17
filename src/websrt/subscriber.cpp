@@ -39,7 +39,9 @@ namespace
 {
 
 // Bound for how long Stop() waits for the graceful WT close to complete
-// before stopping the loop underneath it.
+// before stopping the loop underneath it. Shorter than the publisher's
+// 5000: the subscriber only receives, so the drain is just the WT
+// teardown handshake; there is no sender buffer left to flush.
 constexpr int kStopDrainMs = 3000;
 
 } // namespace
