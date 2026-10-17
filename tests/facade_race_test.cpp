@@ -25,6 +25,12 @@
 // (c) trailing canary: fresh Subscriber and Publisher sessions, driven
 //     concurrently in this same process, must still fail typed and tear
 //     down cleanly.
+// (d) publisher Write vs Stop on the offline states: the blocked-send
+//     case needs a connected session, i.e. the live oracle (publisher_test
+//     covers it there), but every Write state reachable without a gateway
+//     - never-started, start-failed (Stop hammering through the failure
+//     teardown), already-stopped - must return its typed result promptly:
+//     never consuming the Write budget, never a positive accept.
 //
 // Reproduction note: the double-run window of the old check-then-act
 // guards is a bare load/store pair - nanoseconds wide, found by code
@@ -62,6 +68,11 @@ constexpr auto kStartHeadStart = std::chrono::milliseconds(50);
 // The sentinel must outlive all of its family's rounds (each well under
 // ~300 ms) so any double cleanup lands while it is live.
 constexpr int kSentinelTimeoutMs = 6000;
+// Write budget for (d): large enough that a state check consuming it
+// would be an obvious hang. The prompt ceiling is generous - the offline
+// state checks are flag reads, so anything near it is a regression.
+constexpr int  kWriteBudgetMs = 10000;
+constexpr auto kWritePromptMs = std::chrono::milliseconds(2000);
 
 std::atomic<bool> g_ok{true};
 std::atomic<int>  g_checks{0};
@@ -250,6 +261,78 @@ void TestCanaryCleanSessions()
         "canary: %d concurrent rounds per façade in %lld ms\n", kCanaryRounds, static_cast<long long>(ms.count()));
 }
 
+// ---- (d) publisher Write vs Stop on the offline states ----
+
+// Write's blocking domain proper - srt_sendmsg2 parked on a full send
+// buffer - needs a connected session, i.e. the live oracle (publisher_test
+// covers it there). Offline a Write can only sit in the façade's state
+// checks, and each must return its typed result promptly while Stop is
+// concurrent or already effected: a budget-consuming wait or a positive
+// accept there would mean the state checks consult something that
+// outlives Stop's teardown.
+void TestPublisherWriteStates()
+{
+    char buf[1128];
+
+    // (d1) never-started: watchdog Stop hammering around Write must leave
+    // the kWriteNotStarted result and its promptness intact.
+    {
+        websrt::Publisher pub;
+        std::atomic<bool> halt{false};
+        auto              watchdogs = SpawnWatchdogs(&pub, halt);
+        const auto        t0        = std::chrono::steady_clock::now();
+        Check([&] { return pub.Write(buf, sizeof buf, kWriteBudgetMs) == websrt::kWriteNotStarted; },
+              "never-started Write must stay kWriteNotStarted under concurrent Stop");
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+        Check([&] { return ms < kWritePromptMs; },
+              "never-started Write must not consume its budget (took " + std::to_string(ms.count()) + " ms)");
+        HaltAndJoin(halt, &watchdogs);
+    }
+
+    // (d2) start-failed: one race round (Start into the dead port while
+    // the watchdogs hammer its failure-path teardown), then - still under
+    // the hammering - Write must be terminal kWriteClosed, prompt.
+    {
+        auto              facade = std::make_unique<websrt::Publisher>();
+        std::atomic<bool> halt{false};
+        std::atomic<int>  status{-1000};
+        std::thread start_thread([&facade, &status] { status.store(facade->Start(DeadPortPublisherConfig(500))); });
+        std::this_thread::sleep_for(kStartHeadStart);
+        auto watchdogs = SpawnWatchdogs(facade.get(), halt);
+        start_thread.join();
+        Check([&]
+              { return status.load() == websrt::kPublishTimedOut || status.load() == websrt::kPublishConnectFailed; },
+              "write-state round Start must fail typed (got " + std::to_string(status.load()) + ")");
+        const auto t0 = std::chrono::steady_clock::now();
+        Check([&] { return facade->Write(buf, sizeof buf, kWriteBudgetMs) == websrt::kWriteClosed; },
+              "start-failed Write must be kWriteClosed while Stop hammers");
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+        Check([&] { return ms < kWritePromptMs; },
+              "start-failed Write must not consume its budget (took " + std::to_string(ms.count()) + " ms)");
+        HaltAndJoin(halt, &watchdogs);
+        facade->Stop();
+        facade.reset();
+    }
+
+    // (d3) already-stopped: Stop ran to completion first; a Write with a
+    // full budget must still return immediately, terminal.
+    {
+        websrt::Publisher pub;
+        const int         status = pub.Start(DeadPortPublisherConfig(300));
+        Check([&] { return status == websrt::kPublishTimedOut || status == websrt::kPublishConnectFailed; },
+              "already-stopped round Start must fail typed (got " + std::to_string(status) + ")");
+        pub.Stop();
+        const auto t0 = std::chrono::steady_clock::now();
+        Check([&] { return pub.Write(buf, sizeof buf, kWriteBudgetMs) == websrt::kWriteClosed; },
+              "post-Stop Write must be kWriteClosed");
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+        Check([&] { return ms < kWritePromptMs; },
+              "post-Stop Write must not consume its budget (took " + std::to_string(ms.count()) + " ms)");
+    }
+
+    std::printf("publisher write states: never-started, start-failed, stopped covered\n");
+}
+
 } // namespace
 
 int main()
@@ -265,6 +348,7 @@ int main()
                                       DeadPortPublisherConfig(500),
                                       DeadPortPublisherConfig(kSentinelTimeoutMs));
     TestCanaryCleanSessions();
+    TestPublisherWriteStates();
 
     if (!g_ok.load())
     {

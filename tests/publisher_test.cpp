@@ -18,6 +18,11 @@
 //     get the typed first-wins rejection (HTTP 403), and the name must
 //     free after End so a fresh Start succeeds. Exits 77 (ctest
 //     SKIP_RETURN_CODE) when the oracle is absent.
+// (5) LIVE blocked-Write gate (same oracle): an unthrottled blast of
+//     one-message Writes fills SRT's send buffer until a call parks on
+//     backpressure; Stop from another thread must unblock it promptly
+//     with the typed kWriteClosed - a Stop that fails to unblock shows
+//     up as kWriteTimeout after the call's full budget instead.
 
 #include <unistd.h>
 
@@ -792,6 +797,150 @@ void TestLiveGate()
                 static_cast<long long>(sub_stats_mid.packets_dropped));
 }
 
+// ---- (5) live blocked-Write vs Stop ----
+
+// The public contract's cross-thread promise: Stop unblocks an in-flight
+// Write within a fraction of a second. An in-flight Write means
+// backpressure: 940-byte Writes (exactly one negotiated message, so a
+// blocked call can never return a partial accept) blasted unthrottled
+// while a fat client-advertised TSBPD latency parks the gateway's
+// receive buffer (see the config below) - the gateway stops ACKing, our
+// send buffer fills, and a call parks inside srt_sendmsg2 until its own
+// budget. Stop must wake it long before that budget.
+void TestLiveStopUnblocksWrite()
+{
+    const std::string       name = "websrt-cpp-pub-stop-" + std::to_string(::getpid());
+    websrt::PublisherConfig cfg;
+    if (!GatewayTarget(&cfg, name))
+    {
+        std::printf("publisher_test: SKIP: oracle target unavailable\n");
+        std::exit(kSkipExit);
+    }
+    cfg.connect_timeout_ms = 5000;
+    // Deterministic backpressure lever: TSBPD latency negotiates to
+    // max(gateway 10 ms, this peer's advertisement), and the gateway's
+    // receive buffer is a fixed 8192 packets that only drain at each
+    // message's timestamp. Holding every message ~8 s makes the
+    // occupancy (rate x latency) blow past 8192 within seconds at ANY
+    // blast rate the client can sustain - the gateway stops ACKing, our
+    // send buffer fills, and a Write parks inside srt_sendmsg2. Without
+    // this the loopback gateway simply keeps up (observed: 20 s of
+    // unthrottled 940 B writes, no park).
+    cfg.tsbpd_latency_ms = 8000;
+
+    std::unique_ptr<websrt::Publisher> pub;
+    const auto                         status = StartWithRetry(cfg, &pub);
+    if (status == websrt::kPublishTimedOut)
+    {
+        std::printf("publisher_test: SKIP: gateway oracle unresponsive\n");
+        std::exit(kSkipExit);
+    }
+    Check([&] { return status == websrt::kPublishOk; },
+          "blocked-Write gate Start must succeed against the oracle (got " + std::to_string(status) + ": " +
+              pub->LastError() + ")");
+
+    constexpr int kBudgetMs       = 10000; // the parked call's own Write budget
+    constexpr int kBlockedAfterMs = 1000;  // a call in flight this long is parked on backpressure
+    constexpr int kPatienceMs     = 20000; // how long to blast while waiting for the buffer to fill
+    constexpr int kUnblockBoundMs = 5000;  // generous prompt ceiling (Stop's own drain bound)
+
+    const auto steady_ms = []
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    };
+
+    std::vector<char>    blast(5 * 188, 0x47); // TS sync byte; one negotiated message per call
+    std::atomic<bool>    writing{false};
+    std::atomic<int>     write_result{0};
+    std::atomic<int64_t> call_started_ms{0};
+
+    std::thread writer(
+        [&]
+        {
+            for (;;)
+            {
+                call_started_ms.store(steady_ms());
+                writing.store(true);
+                const int n = pub->Write(blast.data(), static_cast<int>(blast.size()), kBudgetMs);
+                if (n < 0)
+                {
+                    write_result.store(n);
+                    return;
+                }
+            }
+        });
+
+    bool blocked = false;
+    if (g_ok)
+    {
+        const auto blast_t0 = std::chrono::steady_clock::now();
+        while (!writing.load())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        while (std::chrono::steady_clock::now() - blast_t0 < std::chrono::milliseconds(kPatienceMs))
+        {
+            if (write_result.load() != 0)
+            {
+                break; // the blast itself ended typed - checked below
+            }
+            if (steady_ms() - call_started_ms.load() > kBlockedAfterMs)
+            {
+                blocked = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+
+    // Whether the blast ended BEFORE any Stop decides the verdict below;
+    // capture it now - after Stop, write_result legitimately turns
+    // kWriteClosed (the writer's next Write sees the closed session).
+    const bool ended_early = write_result.load() != 0;
+    if (!blocked && !ended_early)
+    {
+        // The gateway kept up with the blast for the whole patience
+        // window: no call ever parked, so the unblock property was not
+        // exercised this run. Loud note, not a failure - a pass here
+        // would be a lie, a fail would flag a fast gateway.
+        std::printf(
+            "live stop-vs-write: gateway drained the blast for %d ms; no Write parked, property not exercised\n",
+            kPatienceMs);
+    }
+
+    // Stop from this thread - the documented cross-thread caller. The
+    // clock covers Stop itself plus the writer's return: both must land
+    // far inside the parked call's 10 s budget.
+    const auto t_stop = std::chrono::steady_clock::now();
+    pub->Stop();
+    writer.join();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t_stop);
+
+    if (blocked)
+    {
+        Check([&] { return write_result.load() == websrt::kWriteClosed; },
+              "blocked Write interrupted by Stop must return kWriteClosed (got " + std::to_string(write_result.load()) +
+                  ": " + pub->LastError() + ")");
+        Check([&] { return ms.count() < kUnblockBoundMs; },
+              "Stop must unblock the parked Write promptly (took " + std::to_string(ms.count()) + " ms)");
+        std::printf("live stop-vs-write: parked Write unblocked in %lld ms with result %d\n",
+                    static_cast<long long>(ms.count()),
+                    write_result.load());
+    }
+    else if (ended_early)
+    {
+        // The blast ended on its own before any Stop: an error would be a
+        // real finding (the session must survive backpressure), and a
+        // kWriteTimeout would mean a call sat out its whole 10 s budget
+        // with the detection window never firing. Either way: report it.
+        Check([&] { return false; },
+              "blast Write ended before Stop (got " + std::to_string(write_result.load()) + ": " + pub->LastError() +
+                  ")");
+    }
+}
+
 } // namespace
 
 int main()
@@ -801,6 +950,7 @@ int main()
     TestHttpStatusMapping();
     TestOfflineMisuse();
     TestLiveGate();
+    TestLiveStopUnblocksWrite();
 
     if (!g_ok)
     {
