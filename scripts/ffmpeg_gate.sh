@@ -67,17 +67,12 @@ trap cleanup EXIT
 curl -fsS -m 5 "$HEALTH_URL" >/dev/null ||
     fail "Rust gateway unhealthy at $HEALTH_URL (check: sudo supervisorctl status websrt)"
 
-# Cert mode: parse the gateway's runtime cert-hash.js. A pinned hash
-# selects `cert_hash=`; `null` (mkcert / PKI mode) selects `pki=1`.
-HASH=$(sed -n 's/.*CERT_HASH *= *"\([0-9a-fA-F]\{64\}\)".*/\1/p' "$CERT_JS" | head -1)
-if [ -n "$HASH" ]; then
-    CERT_PARAM="cert_hash=$HASH"
-elif grep -q 'CERT_HASH *= *null' "$CERT_JS"; then
-    CERT_PARAM="pki=1"
-    echo "ffmpeg-gate: cert mode: pki (CERT_HASH null; pinning skipped)"
-else
-    fail "cannot parse CERT_HASH from $CERT_JS"
-fi
+# Cert mode: feed the gateway's runtime cert-hash.js to both consumers
+# directly - websrt://?cert_hash_file= and websrt-dump --cert-hash-file
+# each parse it (a pinned hash selects pinning; `null` selects PKI), the
+# same parser logic in both.
+CERT_PARAM="cert_hash_file=$CERT_JS"
+DUMP_CERT=(--cert-hash-file "$CERT_JS")
 
 URL_HOST_PORT="$GW_HOST:$WT_PORT"
 
@@ -113,10 +108,8 @@ run_gate() {
     # (pub + dump + sub) trip the local oracle's accept-loop stall
     # (documented deaf-oracle behavior); spreading them out avoids it.
     sleep $((DUMP_DELAY_S - SUB_DELAY_S))
-    local dump_cert=(--pki)
-    [ -n "$HASH" ] && dump_cert=(--cert-hash "$HASH")
     "$DUMP" --host "$GW_HOST" --port "$WT_PORT" --stream "$stream" \
-        --out "$tmp/dump.ts" "${dump_cert[@]}" \
+        --out "$tmp/dump.ts" "${DUMP_CERT[@]}" \
         --duration 8 --stats-interval 5 \
         >"$tmp/dump.log" 2>&1 &
     DUMP_PID=$!

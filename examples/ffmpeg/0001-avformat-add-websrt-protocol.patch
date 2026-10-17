@@ -8,11 +8,13 @@ WebTransport - through libwebsrt's C ABI. Direction decides semantics:
 an output publishes ?stream=NAME, an input subscribes to it, so the
 same URL works verbatim on both sides.
 
-URL: websrt://host:port?stream=NAME[&cert_hash=HEX][&pki=1][&latency_ms=N]
+URL: websrt://host:port?stream=NAME[&cert_hash=HEX][&cert_hash_file=PATH][&pki=1][&latency_ms=N]
 
 cert_hash pins the gateway certificate (SHA-256 of the DER, 64 hex
-chars) the way browsers pin self-signed WebTransport servers; with no
-cert parameter the protocol uses normal PKI validation.
+chars) the way browsers pin self-signed WebTransport servers;
+cert_hash_file reads the gateway's runtime cert-hash.js and uses its
+window.CERT_HASH value ("<hex>" pins, null means PKI); with no cert
+parameter the protocol uses normal PKI validation.
 
 MPEG-TS bytes are framed by the library into 188-aligned SRT live
 messages of at most 1128 bytes; reads bounce through an internal
@@ -25,14 +27,6 @@ writes to 30 s and reads to 15 s.
 
 Signed-off-by: maxolgi <maxolgi@users.noreply.github.com>
 ---
- configure                 |   5 +
- doc/protocols.texi        |  28 +++
- libavformat/Makefile      |   1 +
- libavformat/protocols.c   |   1 +
- libavformat/websrtproto.c | 414 ++++++++++++++++++++++++++++++++++++++
- 5 files changed, 449 insertions(+)
- create mode 100644 libavformat/websrtproto.c
-
 diff --git a/configure b/configure
 index c97ddb18..6f665eee 100755
 --- a/configure
@@ -71,10 +65,10 @@ index c97ddb18..6f665eee 100755
                               require_cpp_condition libx264 x264.h "X264_BUILD >= 155" && {
                               [ "$toolchain" != "msvc" ] ||
 diff --git a/doc/protocols.texi b/doc/protocols.texi
-index 7812d154..4a7a5fd0 100644
+index 7812d154..46d98daa 100644
 --- a/doc/protocols.texi
 +++ b/doc/protocols.texi
-@@ -2589,6 +2589,34 @@ SOCK_SEQPACKET). If greater than zero, this value is used as
+@@ -2589,6 +2589,38 @@ SOCK_SEQPACKET). If greater than zero, this value is used as
  @code{max_packet_size}. Ignored for SOCK_STREAM. Default is @code{0}.
  @end table
  
@@ -100,6 +94,10 @@ index 7812d154..4a7a5fd0 100644
 +@item cert_hash=@var{HEX}
 +SHA-256 of the gateway certificate DER (64 hex chars); pins the
 +certificate the way browsers pin self-signed WebTransport gateways.
++@item cert_hash_file=@var{PATH}
++Read the gateway's runtime @file{cert-hash.js} and use its
++@code{window.CERT_HASH} value: a quoted hash pins as @option{cert_hash},
++@code{null} means PKI. A missing or malformed file fails the open.
 +@item pki=1
 +Normal PKI validation; default when no cert parameter is given.
 +@item latency_ms=@var{N}
@@ -135,10 +133,10 @@ index aea09da4..ba1ceb95 100644
  extern const URLProtocol ff_librist_protocol;
 diff --git a/libavformat/websrtproto.c b/libavformat/websrtproto.c
 new file mode 100644
-index 00000000..2ad44054
+index 00000000..b43c99e8
 --- /dev/null
 +++ b/libavformat/websrtproto.c
-@@ -0,0 +1,414 @@
+@@ -0,0 +1,512 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -167,6 +165,10 @@ index 00000000..2ad44054
 + *   cert_hash=HEX        SHA-256 of the gateway cert DER (64 hex chars);
 + *                        pins the certificate the way browsers pin
 + *                        self-signed WebTransport gateways
++ *   cert_hash_file=PATH  read the gateway's runtime cert-hash.js and use
++ *                        its window.CERT_HASH value: "<hex>" pins as
++ *                        cert_hash, null means PKI (same parser as
++ *                        websrt-dump; a broken file fails the open)
 + *   pki=1                normal PKI validation (default when no cert
 + *                        parameter is given)
 + *   latency_ms=N         TSBPD latency floor (default 120)
@@ -193,6 +195,7 @@ index 00000000..2ad44054
 +
 +#include "libavutil/avstring.h"
 +#include "libavutil/error.h"
++#include "libavutil/file_open.h"
 +#include "libavutil/log.h"
 +#include "libavutil/mem.h"
 +#include "libavutil/parseutils.h"
@@ -254,6 +257,88 @@ index 00000000..2ad44054
 +    return s[64] == '\0';
 +}
 +
++/* The gateway writes `window.CERT_HASH = "<64 hex>";` (self-signed mode)
++ * or `window.CERT_HASH = null;` (PKI mode) into cert-hash.js. Ported from
++ * websrt-dump's parser - strict, so a broken file fails the open instead
++ * of the stream. On success hex_out holds the 64-char hash, or "" when
++ * the file selects PKI. */
++static int websrt_read_cert_hash_js(URLContext *h, const char *path,
++                                    char *hex_out)
++{
++    char buf[4096];
++    char *js = NULL;
++    size_t size = 0;
++    const char *key;
++    size_t i;
++    int ret = 0;
++    FILE *f = avpriv_fopen_utf8(path, "rb");
++
++    if (!f) {
++        av_log(h, AV_LOG_ERROR, "cert_hash_file: cannot open '%s'\n", path);
++        return AVERROR(EIO);
++    }
++    for (;;) {
++        size_t n = fread(buf, 1, sizeof(buf), f);
++        if (n > 0) {
++            char *grown;
++            if (size > 65536) {
++                av_log(h, AV_LOG_ERROR, "cert_hash_file: '%s' is not a cert-hash.js\n", path);
++                ret = AVERROR(EINVAL);
++                goto out;
++            }
++            grown = av_realloc(js, size + n);
++            if (!grown) {
++                ret = AVERROR(ENOMEM);
++                goto out;
++            }
++            js = grown;
++            memcpy(js + size, buf, n);
++            size += n;
++        }
++        if (n < sizeof(buf))
++            break; /* short read: EOF or error, either way stop */
++    }
++
++    key = size ? av_strnstr(js, "CERT_HASH", size) : NULL;
++    if (!key) {
++        av_log(h, AV_LOG_ERROR, "cert_hash_file: no CERT_HASH in '%s'\n", path);
++        ret = AVERROR(EINVAL);
++        goto out;
++    }
++    i = key - js + strlen("CERT_HASH");
++    while (i < size && js[i] && strchr(" \t\r\n", js[i]))
++        i++;
++    if (i >= size || js[i] != '=') {
++        av_log(h, AV_LOG_ERROR, "cert_hash_file: malformed CERT_HASH assignment\n");
++        ret = AVERROR(EINVAL);
++        goto out;
++    }
++    i++;
++    while (i < size && js[i] && strchr(" \t\r\n", js[i]))
++        i++;
++    if (i + 4 <= size && !strncmp(js + i, "null", 4)) {
++        hex_out[0] = '\0'; /* the file selects PKI */
++    } else {
++        if (i >= size || js[i] != '"' || i + 1 + 64 >= size ||
++            js[i + 1 + 64] != '"') {
++            av_log(h, AV_LOG_ERROR, "cert_hash_file: CERT_HASH is neither null nor a quoted 64-char hash\n");
++            ret = AVERROR(EINVAL);
++            goto out;
++        }
++        memcpy(hex_out, js + i + 1, 64);
++        hex_out[64] = '\0';
++        if (!websrt_is_hex_64(hex_out)) {
++            av_log(h, AV_LOG_ERROR, "cert_hash_file: CERT_HASH value is not 64 hex characters\n");
++            ret = AVERROR(EINVAL);
++            goto out;
++        }
++    }
++out:
++    av_free(js);
++    fclose(f);
++    return ret;
++}
++
 +static int websrt_parse_options(URLContext *h, const char *uri,
 +                                char *host, int host_size, int *port,
 +                                char *stream, int stream_size,
@@ -291,9 +376,20 @@ index 00000000..2ad44054
 +        av_strlcpy(s->cert_hash, buf, sizeof(s->cert_hash));
 +        cert_params++;
 +    }
++    if (av_find_info_tag(buf, sizeof(buf), "cert_hash_file", p)) {
++        int ret;
++        if (cert_params) {
++            av_log(h, AV_LOG_ERROR, "cert parameters are mutually exclusive\n");
++            return AVERROR(EINVAL);
++        }
++        ret = websrt_read_cert_hash_js(h, buf, s->cert_hash);
++        if (ret < 0)
++            return ret;
++        cert_params++;
++    }
 +    if (av_find_info_tag(buf, sizeof(buf), "pki", p)) {
 +        if (cert_params) {
-+            av_log(h, AV_LOG_ERROR, "cert_hash and pki are mutually exclusive\n");
++            av_log(h, AV_LOG_ERROR, "cert_hash, cert_hash_file and pki are mutually exclusive\n");
 +            return AVERROR(EINVAL);
 +        }
 +        cert_params++;

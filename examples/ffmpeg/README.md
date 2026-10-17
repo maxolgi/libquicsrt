@@ -15,7 +15,7 @@ Bumping the FFmpeg pin = update `FFMPEG_MASTER_COMMIT`, re-verify
 
 ## URL grammar
 
-    websrt://host:port?stream=NAME[&cert_hash=HEX][&pki=1][&latency_ms=N]
+    websrt://host:port?stream=NAME[&cert_hash=HEX][&cert_hash_file=PATH][&pki=1][&latency_ms=N]
 
 - **Direction decides semantics**: an *output* (URL_WRONLY) publishes
   `NAME` toward the gateway (`?publish=NAME`); an *input* subscribes
@@ -23,10 +23,11 @@ Bumping the FFmpeg pin = update `FFMPEG_MASTER_COMMIT`, re-verify
 - `stream=NAME` — required stream name (first-wins occupancy: a second
   publisher gets "stream name in use" and exit 98/`EADDRINUSE`).
 - `cert_hash=HEX` — SHA-256 of the gateway cert DER (64 hex chars);
-  pins like a browser's `serverCertificateHashes`. The gateway's
-  runtime `cert-hash.js` is a web artifact (`window.CERT_HASH = "<hex>"`;
-  `= null` selects PKI) — extract the hex with the sed the gate uses:
-  `sed -n 's/.*CERT_HASH *= *"\([0-9a-fA-F]\{64\}\)".*/\1/p' cert-hash.js`.
+  pins like a browser's `serverCertificateHashes`.
+- `cert_hash_file=PATH` — read the gateway's runtime `cert-hash.js`
+  (a web artifact: `window.CERT_HASH = "<hex>"`; `= null` selects PKI)
+  and use its value — same parser as websrt-dump's
+  `--cert-hash-file`; a missing or malformed file fails the open.
 - `pki=1` — normal PKI validation. **Default** when no cert parameter
   is given.
 - `latency_ms=N` — TSBPD latency floor (default 120).
@@ -41,11 +42,10 @@ resolved):
     ffmpeg -f mpegts -i websrt://gw:443?stream=test -c copy out.ts
 
 Locally (Rust gateway under supervisord: WebTransport UDP 127.0.0.1:4433,
-health 9091; pin its cert via the hash in its runtime `cert-hash.js`):
+health 9091; pin its runtime `cert-hash.js` directly):
 
     CERT_JS=/home/flibb/maxolgi/WebSRT/web/public/cert-hash.js
-    HASH=$(sed -n 's/.*CERT_HASH *= *"\([0-9a-fA-F]\{64\}\)".*/\1/p' "$CERT_JS" | head -1)
-    URL="websrt://127.0.0.1:4433?stream=test&cert_hash=$HASH"   # HASH empty → &pki=1
+    URL="websrt://127.0.0.1:4433?stream=test&cert_hash_file=$CERT_JS"
 
     ./deps/ffmpeg/ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
         -re -f lavfi -i sine=frequency=440 \
