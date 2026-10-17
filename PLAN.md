@@ -1,7 +1,15 @@
 # Plan: ReceiverCore publish path (send_message)
 
-Status: Step 1 done (semantics below filled in from the oracle study);
-implementation steps 2-5 pending.
+Status: Steps 1-4 done — semantics filled (below); SendMessage +
+instantaneous bistats stats implemented (c291805); loopback publish
+case (a5ccf3c); edge cases (ff93691). Note for the consumer: the
+backpressure test's 4-datagram gate prefix is load-bearing — a 100%
+blackout makes recovery impossible at the srt level (no NAK possible,
+no blind FASTREXMIT against a NAKREPORT peer; the next send trips
+"SEQUENCE DISCREPANCY. BREAKING CONNECTION"), and sender sndDropTooLate
+drops aged backlog without DROPREQ. Both matter for websrt-wasm-cpp.
+Remaining: step 5 hand-off — human pushes; websrt-wasm-cpp bumps
+deps/libwebsrt and runs its PLAN M6; this doc retires then.
 
 ## Goal
 
@@ -142,3 +150,24 @@ Oracle: `SrtReceiver.send_message(bytes, now_us)` — `WebSRT/crates/srt-wasm/sr
   internal timer, exposes getStats(); the consumer's srtw_get_stats /
   harness stats_map.h already carries all five tx fields at fixed offsets —
   no ABI change needed for stats).
+- C++ hook / thread domain: SendMessage sends on the accepted socket
+  (`accepted_`, parked by the accept thread under mutex_,
+  receiver_core.cpp:236-237) — never the listener — and belongs to the
+  header's app-thread domain (4, beside Read/Stats, receiver_core.h:49)
+  under Read's discipline: snapshot the socket under mutex_, do the
+  SNDTIMEO-bounded send outside the lock, never block holding it
+  (receiver_core.h:53-56; the srt threads already own the wire side via
+  VtSend, receiver_core.h:37-41). SRTO_FC is NOT set on the listener — fork
+  default 25600 (socketconfig.h:200), the LIVE preset leaves it
+  (socketconfig.cpp:651-670) and the option is pre-bind only (core.cpp:165)
+  — same 25600 the oracle negotiates, so nothing to add. The 940 chunk is
+  the accepted socket's MSS-derived payload — min(peer MSS) − 28 − 16 at
+  accept (core.cpp:6168-6182), NOT the configured SRTO_PAYLOADSIZE 1128
+  (the sockopt getter reports the configured value, core.h:486-493) —
+  so the chunk size must be read back live. Shipped (c291805): the
+  accept thread calls NegotiatePayload(accepted, params_.payload_size)
+  — exactly that MSS-derived cap, floored to whole TS packets — with
+  negotiate.cpp added to the receiver-only flavor (CMakeLists;
+  Deliverable 3's pre-authorized second file). Hardcoding 940 was
+  considered and rejected: the readback is exact and already shared
+  with the Publisher.
