@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "core/event_loop.h"
+#include "proto/constants.h"
 #include "wt/capsule.h"
 
 struct lsquic_engine;
@@ -79,15 +80,10 @@ public:
         std::string cert_hash_hex;
     };
 
-    // Largest payload SendDatagram accepts: it must fit next to the context
-    // prefix inside a datagram frame on a minimum-MTU (1200-byte) packet
-    // (SRT's 1128-byte payload does). Distinct from the >= 1200-byte WT
-    // datagram *transport* support requirement - one bounds the payload we
-    // queue, the other is what the path must carry. The transport's actual
-    // ceiling is learned at runtime; queued datagrams that exceed it are
-    // dropped whole and counted.
-    static constexpr std::size_t kMaxDatagramSize    = 1184;
-    static constexpr std::size_t kMaxQueuedDatagrams = 256;
+    // Datagram bounds are the shared protocol constants kMaxDatagramSize /
+    // kMaxQueuedDatagrams (proto/constants.h): SendDatagram rejects a
+    // payload over kMaxDatagramSize, and a full queue drops the datagram
+    // and counts it in DatagramsDropped().
 
     // `listener` must outlive the client. Supported teardown orderings:
     // Close() then destroy after OnSessionClosed (the loop may keep

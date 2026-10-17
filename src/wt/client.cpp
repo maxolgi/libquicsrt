@@ -159,9 +159,9 @@ struct WtClientCallbacks
             // fresh packet instead of being dropped. WebSRT requires
             // >= 1200-byte WT datagram support, so kMaxDatagramSize
             // always fits the peer's advertised frame maximum.
-            if (lsquic_conn_set_min_datagram_size(conn, WTClient::kMaxDatagramSize) != 0)
+            if (lsquic_conn_set_min_datagram_size(conn, kMaxDatagramSize) != 0)
             {
-                Log("could not pin min datagram size %zu; large datagrams may drop", WTClient::kMaxDatagramSize);
+                Log("could not pin min datagram size %zu; large datagrams may drop", kMaxDatagramSize);
             }
             lsquic_conn_make_stream(conn);
         }

@@ -11,15 +11,6 @@ namespace websrt
 namespace
 {
 
-// Buffer depth in packets, mirroring the browser publisher
-// (crates/srt-wasm/src/lib.rs new_inner): enough for the TSBPD window at
-// 20 packets per millisecond, both directions, clamped to the ingest range.
-int BufferPackets(int latency_ms)
-{
-    const long long needed = static_cast<long long>(latency_ms) * 40;
-    return static_cast<int>(std::clamp(needed, 8192LL, 320000LL));
-}
-
 // SRTO_SNDBUF/SRTO_RCVBUF are in BYTES; srt converts with MSS - UDP header
 // (1500 - 28 = 1472) - see the M0 loopback harness.
 constexpr int kBytesPerPacket = 1500 - 28;

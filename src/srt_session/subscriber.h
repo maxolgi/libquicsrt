@@ -75,6 +75,7 @@
 #include <string>
 #include <thread>
 
+#include "proto/constants.h"
 #include "wt/client.h"
 
 // The fork's gated API (build with SRT_ENABLE_VIRTUAL_TRANSPORT defined).
@@ -85,8 +86,8 @@ namespace websrt
 
 struct SubscriberSessionParams
 {
-    int payload_size     = 1128; // WebSRT constant: 6 x 188-byte TS packets
-    int tsbpd_latency_ms = 120;  // gateway ingest default; TSBPD = max(sender, receiver)
+    int payload_size     = kSrtPayloadSize; // 6 x 188 TS packets; HSv5 negotiates min(gateway, listener)
+    int tsbpd_latency_ms = 120;             // gateway ingest default; TSBPD = max(sender, receiver)
     // 0 = seed from the WT layer's smoothed RTT at session-ready time.
     int initial_rtt_ms = 0;
 };

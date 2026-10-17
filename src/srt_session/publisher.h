@@ -83,6 +83,7 @@
 #include <thread>
 #include <vector>
 
+#include "proto/constants.h"
 #include "wt/client.h"
 
 // The fork's gated API (build with SRT_ENABLE_VIRTUAL_TRANSPORT defined).
@@ -93,14 +94,11 @@ namespace websrt
 
 struct PublisherSessionParams
 {
-    int payload_size     = 1128; // WebSRT constant: 6 x 188-byte TS packets
-    int tsbpd_latency_ms = 120;  // srt-wasm publisher default; TSBPD = max(sender, receiver)
+    int payload_size     = kSrtPayloadSize; // 6 x 188 TS packets; HSv5 negotiates min(gateway, listener)
+    int tsbpd_latency_ms = 120;             // srt-wasm publisher default; TSBPD = max(sender, receiver)
     // 0 = seed from the WT layer's smoothed RTT at session-ready time.
     int initial_rtt_ms = 0;
 };
-
-// MPEG-TS packet size on the wire this session frames (never split).
-constexpr int kTsPacketSize = 188;
 
 // Splits a TS byte stream into SRT live messages: every message is a
 // whole number of 188-byte TS packets, at most payload_size long, and a
@@ -134,7 +132,7 @@ public:
     void TruncateTo(std::size_t size);
 
 private:
-    int                       payload_size_ = 1128;
+    int                       payload_size_ = kSrtPayloadSize;
     std::vector<std::uint8_t> pending_;
 };
 
@@ -269,7 +267,7 @@ private:
 
     // App-thread-only (Write/End run on the controlling thread): the
     // negotiated payload size (read back after accept) and the framing.
-    TsChunker chunker_{1128};
+    TsChunker chunker_{kSrtPayloadSize};
 
     // Lock-free mirror of state_ == kClosed for the srt send callback.
     std::atomic<bool> closed_{false};
