@@ -1,8 +1,10 @@
 // WtCapsuleParser units: QUIC varint roundtrips across all four widths
 // and truncation, CLOSE detection (whole, split across Feeds, sticky,
 // repeated), skippable unknown/PADDING capsules, partial-tail retention,
-// empty feeds, and garbage-prefix retention. Plain checks (not assert) so
-// Release stays meaningful; pure parsing - no sockets, no threads.
+// empty feeds, garbage-prefix retention, and the pending-bytes ceiling
+// (huge declared length, just-under-ceiling capsule, bounded after
+// overflow). Plain checks (not assert) so Release stays meaningful; pure
+// parsing - no sockets, no threads.
 
 #include "wt/capsule.h"
 
@@ -283,6 +285,97 @@ bool TestGarbagePrefix()
     return Check(parser.pending() == sizeof kGarbage - 1 + close_wire.size(), "garbage plus CLOSE stays pending");
 }
 
+bool TestOverflowHugeDeclaredLength()
+{
+    // An unknown capsule whose 8-byte length varint claims 1 GiB: only the
+    // first payload byte ever arrives. The demand alone exceeds the
+    // ceiling, so the parser must not buffer waiting for the rest.
+    std::vector<std::uint8_t> wire;
+    std::uint8_t              v[8];
+    const std::size_t         tn = VarintPut(v, 0x3f);
+    wire.insert(wire.end(), v, v + tn);
+    const std::size_t ln = VarintPut(v, 1ULL << 30);
+    wire.insert(wire.end(), v, v + ln);
+    wire.push_back(0xaa);
+    Check(wire.size() == 1 + 8 + 1, "huge-length header is type + 8-byte length + one payload byte");
+
+    WtCapsuleParser parser;
+    parser.Feed(wire.data(), wire.size());
+    if (!Check(parser.overflow(), "a capsule demanding more than the ceiling sets overflow"))
+    {
+        return false;
+    }
+    if (!Check(parser.pending() <= WtCapsuleParser::kMaxPendingBytes, "pending stays at/below the ceiling on overflow"))
+    {
+        return false;
+    }
+    return Check(!parser.closed(), "overflow does not set closed");
+}
+
+bool TestCapsuleJustUnderCeiling()
+{
+    // Total capsule (1-byte type + 4-byte length + payload) one byte under
+    // the ceiling, fed as a head then the rest: the partial wait stays in
+    // bounds and the completed capsule is skipped via its length prefix.
+    const std::size_t         payload = WtCapsuleParser::kMaxPendingBytes - 6;
+    std::vector<std::uint8_t> wire;
+    AppendCapsule(wire, 0x3f, std::vector<std::uint8_t>(payload, 0xaa));
+    Check(wire.size() == WtCapsuleParser::kMaxPendingBytes - 1,
+          "just-under-ceiling capsule is ceiling - 1 bytes on the wire");
+
+    WtCapsuleParser parser;
+    parser.Feed(wire.data(), 64);
+    if (!Check(!parser.overflow(), "an in-bounds partial tail does not overflow"))
+    {
+        return false;
+    }
+    if (!Check(parser.pending() == 64, "in-bounds partial tail is retained"))
+    {
+        return false;
+    }
+    parser.Feed(wire.data() + 64, wire.size() - 64);
+    if (!Check(!parser.overflow(), "a capsule completing just under the ceiling parses without overflow"))
+    {
+        return false;
+    }
+    if (!Check(parser.pending() == 0, "just-under-ceiling capsule is fully consumed"))
+    {
+        return false;
+    }
+    return Check(!parser.closed(), "unknown capsule type does not close");
+}
+
+bool TestOverflowStaysBounded()
+{
+    // After overflow the parser retains nothing, so further Feeds - even
+    // multi-ceiling ones - cannot regrow the buffer.
+    std::vector<std::uint8_t> wire;
+    std::uint8_t              v[8];
+    const std::size_t         tn = VarintPut(v, 0x3f);
+    wire.insert(wire.end(), v, v + tn);
+    const std::size_t ln = VarintPut(v, 1ULL << 40);
+    wire.insert(wire.end(), v, v + ln);
+
+    WtCapsuleParser parser;
+    parser.Feed(wire.data(), wire.size());
+    if (!Check(parser.overflow(), "header-only huge capsule sets overflow"))
+    {
+        return false;
+    }
+
+    std::vector<std::uint8_t> more(WtCapsuleParser::kMaxPendingBytes * 4, 0xaa);
+    parser.Feed(more.data(), more.size());
+    if (!Check(parser.overflow(), "overflow is sticky after further feeds"))
+    {
+        return false;
+    }
+    if (!Check(parser.pending() <= WtCapsuleParser::kMaxPendingBytes, "pending stays bounded after overflow"))
+    {
+        return false;
+    }
+    return Check(!parser.closed(), "dropped bytes after overflow cannot close");
+}
+
 } // namespace
 
 int main()
@@ -304,6 +397,9 @@ int main()
         {.name = "empty-feed", .fn = TestEmptyFeed},
         {.name = "close-sticky", .fn = TestCloseStickyAndRepeated},
         {.name = "garbage-prefix", .fn = TestGarbagePrefix},
+        {.name = "overflow-huge-length", .fn = TestOverflowHugeDeclaredLength},
+        {.name = "just-under-ceiling", .fn = TestCapsuleJustUnderCeiling},
+        {.name = "overflow-stays-bounded", .fn = TestOverflowStaysBounded},
     };
 
     bool ok = true;

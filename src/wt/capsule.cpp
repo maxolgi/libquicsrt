@@ -57,6 +57,10 @@ std::optional<std::pair<std::uint64_t, std::size_t>> VarintGet(const std::uint8_
 
 void WtCapsuleParser::Feed(const std::uint8_t* data, std::size_t size)
 {
+    if (overflow_)
+    {
+        return; // sticky: drop instead of retain
+    }
     buf_.insert(buf_.end(), data, data + size);
     std::size_t off = 0;
     for (;;)
@@ -73,6 +77,15 @@ void WtCapsuleParser::Feed(const std::uint8_t* data, std::size_t size)
         }
         if (buf_.size() - off - type->second - length->second < length->first)
         {
+            // Partial tail: wait only while the whole capsule (header +
+            // payload) fits under the ceiling - the unconsumed tail is
+            // always a prefix of it, so pending() stays bounded.
+            if (off + type->second + length->second + length->first > kMaxPendingBytes)
+            {
+                overflow_ = true;
+                buf_.clear();
+                return;
+            }
             break;
         }
         if (type->first == kCapsuleCloseWtSession)
@@ -87,6 +100,11 @@ void WtCapsuleParser::Feed(const std::uint8_t* data, std::size_t size)
 bool WtCapsuleParser::closed() const
 {
     return closed_;
+}
+
+bool WtCapsuleParser::overflow() const
+{
+    return overflow_;
 }
 
 std::size_t WtCapsuleParser::pending() const
