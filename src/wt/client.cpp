@@ -820,7 +820,6 @@ void WTClient::ReadSessionStream(lsquic_stream_t* stream)
                     Log("session response: \"%s\" -> %d", response_parser_.status_line().c_str(), status);
                 }
                 capsule_parser_.Feed(buf + consumed, static_cast<std::size_t>(n) - consumed);
-                NotifyCapsuleClose();
                 if (status == 200)
                 {
                     state_.store(State::kConnected);
@@ -837,6 +836,12 @@ void WTClient::ReadSessionStream(lsquic_stream_t* stream)
                 {
                     CloseGracefully("unparseable response status line: \"" + response_parser_.status_line() + "\"");
                 }
+                // Only now may a CLOSE capsule that rode the completing
+                // chunk surface: the ready (or failure) notification
+                // derived from the response is delivered first, so a
+                // listener treating the stream-terminal callback as
+                // fatal never sees a spurious OnSessionReady after it.
+                NotifyCapsuleClose();
             }
             else
             {

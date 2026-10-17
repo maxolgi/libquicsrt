@@ -32,6 +32,7 @@
 #include "srt.h"
 #include "srt_session/subscriber.h"
 #include "websrt/resolve.h"
+#include "websrt/start_status.h"
 #include "wt/client.h"
 
 namespace websrt
@@ -125,7 +126,7 @@ public:
             start_failed_ = true;
             Teardown();
             const int status = client_->HttpStatus();
-            if (status != -1 && status != 200)
+            if (HttpStatusIsRejected(status))
             {
                 return kStartRejected;
             }

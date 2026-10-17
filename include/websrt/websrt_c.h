@@ -54,8 +54,8 @@ typedef enum websrt_status
     WEBSRT_ECONFIG   = -3,  // configuration failed validation (last_error has the constraint)
     WEBSRT_ESTATE    = -4,  // wrong session state (double start, stats before start)
     WEBSRT_ETARGET   = -5,  // target rejected (e.g. DNS name did not resolve to an IPv4 address)
-    WEBSRT_EREJECTED = -6,  // gateway refused: publish 403 (name in use, first-wins) / subscribe 404 (no such stream)
-    WEBSRT_ECONNECT  = -7,  // transport-level failure (TLS, network, engine)
+    WEBSRT_EREJECTED = -6,  // gateway refused: publish 403 (name in use, first-wins) / subscribe 404 (no such stream) / 429 (limits)
+    WEBSRT_ECONNECT  = -7,  // transport-level failure (TLS, network, engine) or a non-refusal CONNECT status (e.g. 5xx)
     WEBSRT_ETIMEOUT  = -8,  // connect timeout elapsed; the session was torn down
     WEBSRT_ECLOSED   = -9,  // session already ended
     WEBSRT_EINTERNAL = -10, // unexpected library-internal failure

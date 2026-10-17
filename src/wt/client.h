@@ -58,6 +58,10 @@ public:
     // The session stream reached a terminal event: a CLOSE capsule arrived,
     // the stream hit FIN, or the stream was closed. Capsule payloads are
     // consumed internally; there is nothing else to read from the stream.
+    // Ordering guarantee: when the CONNECT response and a CLOSE capsule
+    // arrive in the same read chunk, the notification derived from the
+    // response (OnSessionReady on 200, the close path otherwise) is
+    // delivered before this callback fires for that chunk.
     virtual void OnStreamReadable() {}
 };
 

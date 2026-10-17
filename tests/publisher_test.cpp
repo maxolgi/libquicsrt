@@ -3,6 +3,9 @@
 // (1) PublisherConfig::validate() matrix - the shared bounds.
 // (2) TsChunker units: 188 alignment, exact 1128 boundaries, sub-188
 //     remainder carryover, non-multiple payload sizes, TruncateTo.
+// (2b) Start HTTP-status mapping units (the façades' rejected vs
+//     connect-failed seam): 403/404/429 are the typed refusals, 5xx and
+//     the unparseable -1 are transport failures.
 // (3) Offline API misuse: Write/Stats/End before Start, invalid config,
 //     Start twice, destruction without Stop.
 // (4) LIVE GATE against the local Rust gateway oracle (the supervisord
@@ -35,6 +38,7 @@
 
 #include "srt_session/publisher.h"
 #include "websrt/publisher.hpp"
+#include "websrt/start_status.h"
 #include "websrt/subscriber.hpp"
 
 namespace
@@ -367,6 +371,25 @@ void TestChunker()
     }
 
     std::printf("chunker units: complete (%d checks so far)\n", g_checks);
+}
+
+// ---- (2b) Start HTTP-status mapping units ----
+
+// The façades' kXRejected / kXConnectFailed seam (websrt/start_status.h),
+// asserted offline: the live gate only ever produces 403/404, so the 5xx
+// branch would otherwise go untested.
+void TestHttpStatusMapping()
+{
+    using websrt::HttpStatusIsRejected;
+    Check([&] { return HttpStatusIsRejected(403) && HttpStatusIsRejected(404) && HttpStatusIsRejected(429); },
+          "403/404/429 are the typed gateway refusals");
+    Check([&] { return !HttpStatusIsRejected(500) && !HttpStatusIsRejected(502) && !HttpStatusIsRejected(503); },
+          "5xx are gateway failures, not refusals");
+    Check([&] { return !HttpStatusIsRejected(-1) && !HttpStatusIsRejected(200); },
+          "-1 (unparseable) and 200 are not refusals");
+    Check([&] { return !HttpStatusIsRejected(302) && !HttpStatusIsRejected(400); },
+          "other statuses (302, 400) are not refusals");
+    std::printf("status mapping units: complete (%d checks so far)\n", g_checks);
 }
 
 // ---- (3) offline API misuse ----
@@ -775,6 +798,7 @@ int main()
 {
     TestConfigValidation();
     TestChunker();
+    TestHttpStatusMapping();
     TestOfflineMisuse();
     TestLiveGate();
 

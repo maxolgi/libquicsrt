@@ -19,6 +19,7 @@
 #include "srt.h"
 #include "srt_session/publisher.h"
 #include "websrt/resolve.h"
+#include "websrt/start_status.h"
 #include "wt/client.h"
 
 namespace websrt
@@ -111,10 +112,11 @@ public:
             start_failed_ = true;
             Teardown();
             const int status = client_->HttpStatus();
-            if (status != -1 && status != 200)
+            // 403 = the stream name is held by a live source
+            // (gateway.rs: "stream name in use", first-wins); 429 = caps.
+            // Other non-200s (5xx) are the gateway failing, not refusing.
+            if (HttpStatusIsRejected(status))
             {
-                // 403 = the stream name is held by a live source
-                // (gateway.rs: "stream name in use", first-wins).
                 return kPublishRejected;
             }
             return kPublishConnectFailed;

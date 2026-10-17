@@ -76,8 +76,8 @@ enum PublisherStartStatus
     kPublishAlreadyStarted, // Start called twice; a Publisher is single-shot
     kPublishInvalidTarget,  // the target was rejected (e.g. DNS name did not resolve to an IPv4 address)
     kPublishRejected,       // the gateway refused the session: HTTP 403 while the stream name is held by a live source
-                            // (first-wins), 429 on limits
-    kPublishConnectFailed,  // transport-level failure (TLS, network, engine)
+                            // (first-wins) or 429 on limits; 5xx is kPublishConnectFailed, not a refusal
+    kPublishConnectFailed,  // transport-level failure (TLS, network, engine) or a non-refusal HTTP status (e.g. 5xx)
     kPublishTimedOut,       // connect_timeout_ms elapsed; the session was torn down
     kPublishInternal,       // unexpected library-internal failure
 };

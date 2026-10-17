@@ -109,13 +109,16 @@ bool ReceiverCore::Start(int measured_rtt_ms, std::string* error)
 
     if (!error->empty())
     {
-        if (vt != nullptr)
-        {
-            srt_virtual_transport_release(vt);
-        }
+        // Socket closed before the transport is released: srt_close sends
+        // the shutdown through the transport's send callback (the header's
+        // teardown-order invariant).
         if (listener != SRT_INVALID_SOCK)
         {
             srt_close(listener);
+        }
+        if (vt != nullptr)
+        {
+            srt_virtual_transport_release(vt);
         }
         // The genuine setup failure is the real reason; keep it ahead of
         // the shutdown the driver will deliver next.

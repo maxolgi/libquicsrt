@@ -46,8 +46,8 @@ enum StartStatus
     kStartInvalidConfig,  // config.validate() failed; LastError() has the reason
     kStartAlreadyStarted, // Start called twice; a Subscriber is single-shot
     kStartInvalidTarget,  // the target was rejected (e.g. DNS name did not resolve to an IPv4 address)
-    kStartRejected,       // the gateway refused the session (unknown stream: HTTP 404)
-    kStartConnectFailed,  // transport-level failure (TLS, network, engine)
+    kStartRejected,       // the gateway refused the session: HTTP 404 (unknown stream) or 429 (session cap)
+    kStartConnectFailed,  // transport-level failure (TLS, network, engine) or a non-refusal HTTP status (e.g. 5xx)
     kStartTimedOut,       // connect_timeout_ms elapsed; the session was torn down
     kStartInternal,       // unexpected library-internal failure
 };

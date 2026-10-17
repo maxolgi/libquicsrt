@@ -42,6 +42,23 @@ constexpr std::uint16_t kDefaultPort          = 443;
 constexpr int           kDefaultLatencyMs     = 120;
 constexpr int           kDefaultConnectMs     = 10000;
 
+// MapStart's case labels are the façade enums' integer VALUES, not their
+// names: a reorder of either enum would silently mistranslate. Pin every
+// value the mapping assumes (both façade enums share the 0..7 ordering).
+static_assert(websrt::kPublishOk == 0 && websrt::kStartOk == 0, "MapStart case 0 -> WEBSRT_OK");
+static_assert(websrt::kPublishInvalidConfig == 1 && websrt::kStartInvalidConfig == 1,
+              "MapStart case 1 -> WEBSRT_ECONFIG");
+static_assert(websrt::kPublishAlreadyStarted == 2 && websrt::kStartAlreadyStarted == 2,
+              "MapStart case 2 -> WEBSRT_ESTATE");
+static_assert(websrt::kPublishInvalidTarget == 3 && websrt::kStartInvalidTarget == 3,
+              "MapStart case 3 -> WEBSRT_ETARGET");
+static_assert(websrt::kPublishRejected == 4 && websrt::kStartRejected == 4, "MapStart case 4 -> WEBSRT_EREJECTED");
+static_assert(websrt::kPublishConnectFailed == 5 && websrt::kStartConnectFailed == 5,
+              "MapStart case 5 -> WEBSRT_ECONNECT");
+static_assert(websrt::kPublishTimedOut == 6 && websrt::kStartTimedOut == 6, "MapStart case 6 -> WEBSRT_ETIMEOUT");
+static_assert(websrt::kPublishInternal == 7 && websrt::kStartInternal == 7,
+              "MapStart default -> WEBSRT_EINTERNAL (kXInternal is 7)");
+
 websrt_status_t MapStart(int status)
 {
     switch (status)
