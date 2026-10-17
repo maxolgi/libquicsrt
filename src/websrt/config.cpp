@@ -103,9 +103,9 @@ std::string ValidateCommon(const std::string& host,
     {
         return "tsbpd_latency_ms must be in 1..60000, got " + std::to_string(tsbpd_latency_ms);
     }
-    if (payload_size < 100 || payload_size > 1456)
+    if (payload_size < 188 || payload_size > 1456)
     {
-        return "payload_size must be in 100..1456, got " + std::to_string(payload_size);
+        return "payload_size must be in 188..1456 (188-byte MPEG-TS packet floor), got " + std::to_string(payload_size);
     }
     if (initial_rtt_ms != 0 && (initial_rtt_ms < 1 || initial_rtt_ms > 30000))
     {

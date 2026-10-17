@@ -279,8 +279,13 @@ void TestConfigValidation()
     }
     {
         auto cfg         = GoodConfig();
-        cfg.payload_size = 100;
-        ExpectValid(cfg, "payload 100");
+        cfg.payload_size = 187;
+        ExpectInvalid(cfg, "payload_size", "payload 187");
+    }
+    {
+        auto cfg         = GoodConfig();
+        cfg.payload_size = 188;
+        ExpectValid(cfg, "payload 188");
     }
     {
         auto cfg         = GoodConfig();
