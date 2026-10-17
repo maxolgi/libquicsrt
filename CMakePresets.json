@@ -18,6 +18,28 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
+        },
+        {
+            "name": "asan",
+            "displayName": "ASan+UBSan (Ninja)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/asan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_C_FLAGS": "-fsanitize=address -fno-omit-frame-pointer",
+                "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
+            }
+        },
+        {
+            "name": "tsan",
+            "displayName": "TSan (Ninja)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/tsan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_C_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+                "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer"
+            }
         }
     ],
     "buildPresets": [
@@ -28,6 +50,14 @@
         {
             "name": "debug",
             "configurePreset": "debug"
+        },
+        {
+            "name": "asan",
+            "configurePreset": "asan"
+        },
+        {
+            "name": "tsan",
+            "configurePreset": "tsan"
         }
     ],
     "testPresets": [
@@ -36,6 +66,27 @@
             "configurePreset": "release",
             "output": {
                 "outputOnFailure": true
+            }
+        },
+        {
+            "name": "asan",
+            "configurePreset": "asan",
+            "output": {
+                "outputOnFailure": true
+            },
+            "environment": {
+                "ASAN_OPTIONS": "detect_leaks=1:detect_stack_use_after_return=1",
+                "UBSAN_OPTIONS": "print_stacktrace=1"
+            }
+        },
+        {
+            "name": "tsan",
+            "configurePreset": "tsan",
+            "output": {
+                "outputOnFailure": true
+            },
+            "environment": {
+                "TSAN_OPTIONS": "halt_on_error=1:suppressions=${sourceDir}/cmake/tsan.supp"
             }
         }
     ]

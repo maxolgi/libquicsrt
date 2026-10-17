@@ -181,7 +181,7 @@ bool TestTruncatedTail()
 {
     // PADDING with length 0x41: the length takes the 2-byte varint form.
     // Feed the type byte and the FIRST length byte; completion follows.
-    std::uint8_t head[2] = {};
+    std::uint8_t head[3] = {}; // type byte + first byte of the 2-byte length varint
     Check(VarintPut(&head[0], 0x00) == 1, "PADDING type is a 1-byte varint");
     Check(VarintPut(&head[1], 0x41) == 2, "length 0x41 encodes as a 2-byte varint");
 

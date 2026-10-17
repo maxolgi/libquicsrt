@@ -1,0 +1,9 @@
+# srt fork (deps/srt, inherited from upstream): CUDT::startup() guards its
+# pthread_atfork registration with a plain function-local `static bool
+# registered` (srtcore/api.cpp) instead of call_once, so concurrent
+# srt_startup() calls data-race on the flag. Worst case is the atfork
+# handler being registered twice; the actual refcounted global init
+# (CUDTUnited::startup) is properly locked. Genuine fork bug - to be fixed
+# in the srt fork repo (maxolgi/srt, branch websrt), then this entry gets
+# deleted.
+race:srt::CUDT::startup

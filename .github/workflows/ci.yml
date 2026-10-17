@@ -1,0 +1,101 @@
+# CI for libwebsrt: plain build+test plus sanitizer coverage of the
+# always-run test set. The four live-oracle tests (wt_echo, c_api_test,
+# subscriber_test, publisher_test) self-skip via SKIP_RETURN_CODE 77 when
+# the Rust WebSRT gateway is absent, so every job runs plain ctest and
+# requires zero failures - skips do not fail.
+
+name: ci
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref (same as websrt-gateway-cpp's ci).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install prerequisites
+        # Derived from build.sh + CMakePresets.json: ninja (preset
+        # generator), go + nasm (BoringSSL fetch/build), zlib1g-dev
+        # (find_package(ZLIB)). gcc 13 and cmake >= 3.24 ship with
+        # ubuntu-24.04.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build golang-go nasm zlib1g-dev
+      - name: Setup (submodules, BoringSSL, CMake configure)
+        run: ./build.sh setup
+      - name: Build
+        run: ./build.sh lib
+      - name: Test
+        run: ./build.sh test
+
+  # Sanitizer instrumentation scope (set via the asan/tsan presets in
+  # CMakePresets.json):
+  #   - first-party code and the srt fork (all C++): ASan + UBSan, with
+  #     UBSan fatal (-fno-sanitize-recover=undefined);
+  #   - lsquic (the only C in tree): ASan only. Its memcpy(dst, NULL, 0)
+  #     idiom when a QUIC token is absent trips UBSan's nonnull-attribute
+  #     check, which has no suppression mechanism - benign on every real
+  #     libc, so UB instrumentation is scoped out by language rather than
+  #     by aborting the job there. Memory errors stay fatal tree-wide.
+  #   - BoringSSL: uninstrumented. It is fetched and prebuilt Release by
+  #     ./build.sh setup and consumed unmodified; per-sanitizer rebuilds
+  #     would roughly double the job for little signal.
+  # Leak detection is on (ASan default on Linux, explicit in the preset):
+  # the srt fork's internal threads shut down cleanly, no suppressions
+  # needed.
+  #
+  # The build.sh setup step also configures the plain release tree; that
+  # is harmless (seconds) and keeps one dependency-bootstrap path.
+
+  asan-ubsan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build golang-go nasm zlib1g-dev
+      - name: Setup (submodules, BoringSSL)
+        run: ./build.sh setup
+      - name: Build (ASan+UBSan)
+        run: |
+          cmake --preset asan
+          cmake --build --preset asan -j "$(nproc)"
+      - name: Test (ASan+UBSan)
+        run: ctest --preset asan
+
+  # TSan runs the full always-run set, not a subset: the suite is
+  # deadline-bound, not CPU-bound, so measured wall time matches the plain
+  # build (~20 s locally; facade_race_test's 13 s is dominated by its
+  # watchdog deadlines). halt_on_error=1 makes any race fail the job; the
+  # one known dep-internal race (srt fork's CUDT::startup registered-flag
+  # guard) is suppressed in cmake/tsan.supp with the details.
+  tsan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build golang-go nasm zlib1g-dev
+      - name: Setup (submodules, BoringSSL)
+        run: ./build.sh setup
+      - name: Build (TSan)
+        run: |
+          cmake --preset tsan
+          cmake --build --preset tsan -j "$(nproc)"
+      - name: Test (TSan)
+        run: ctest --preset tsan
