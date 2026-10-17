@@ -13,13 +13,15 @@
 // transport handle released - only after that may the WTClient die,
 // because srt_close sends shutdown through the send callback into it),
 // and only then do the members destruct (session, client, loop - all
-// quiescent by then). Teardown() is idempotent so the Start failure
-// paths and a later Stop()/destructor cannot double-drop the srt
+// quiescent by then). Teardown() is idempotent under an atomic
+// exactly-once guard so the Start failure paths, a later Stop()/
+// destructor, and a concurrent watchdog Stop cannot double-drop the srt
 // library reference.
 
 #include "websrt/subscriber.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <climits>
 #include <mutex>
@@ -208,13 +210,16 @@ public:
         return kStatsOk;
     }
 
+    // Stop is the one documented cross-thread entry (a watchdog racing
+    // the controlling thread or the destructor): the exchange makes the
+    // guard exactly-once, so exactly one caller runs the teardown
+    // sequence and the losers return promptly.
     void Stop()
     {
-        if (stopped_)
+        if (stopped_.exchange(true))
         {
-            return;
+            return; // another caller owns the teardown
         }
-        stopped_ = true;
         if (!ever_started_ || torn_down_)
         {
             return;
@@ -238,14 +243,16 @@ private:
     }
 
     // Post-failure / post-stop common path: no more loop callbacks, srt
-    // sockets closed, library reference dropped. Idempotent.
+    // sockets closed, library reference dropped. Idempotent; the
+    // exchange guard makes it exactly-once even when Stop and a Start
+    // failure path race into it from two threads (a second srt_cleanup
+    // would over-decrement the process-global srt refcount).
     void Teardown()
     {
-        if (torn_down_)
+        if (torn_down_.exchange(true))
         {
             return;
         }
-        torn_down_ = true;
         loop_.Stop();
         session_->Finalize();
         srt_cleanup();
@@ -259,10 +266,14 @@ private:
     std::unique_ptr<WTClient>          client_;
     std::unique_ptr<SubscriberSession> session_ = std::make_unique<SubscriberSession>(SubscriberSessionParams{});
 
-    bool ever_started_ = false;
-    bool start_failed_ = false;
-    bool stopped_      = false;
-    bool torn_down_    = false;
+    // Lifecycle flags. stopped_/torn_down_ are atomic test-and-set
+    // guards (see Stop/Teardown); ever_started_ is atomic because Stop -
+    // the cross-thread entry - reads it while Start may still be setting
+    // it. start_failed_ is only touched by the controlling/Read thread.
+    std::atomic<bool> ever_started_ = false;
+    bool              start_failed_ = false;
+    std::atomic<bool> stopped_      = false;
+    std::atomic<bool> torn_down_    = false;
 
     mutable std::mutex error_mutex_;
     std::string        last_error_;

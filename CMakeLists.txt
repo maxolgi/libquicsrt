@@ -350,6 +350,20 @@ if(WEBSRT_ENABLE_WT)
     add_test(NAME publisher_test COMMAND publisher_test)
     set_tests_properties(publisher_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+    # facade_race_test: concurrent Stop() safety of the public façades -
+    # watchdog threads hammer Stop() while Start fails against a dead
+    # port (error-path teardown) and around the controlling thread's
+    # Stop/destructor; a trailing canary proves fresh sessions in the
+    # same process still start and tear down cleanly (a second
+    # srt_cleanup would corrupt the global srt refcount). Dead port
+    # only, no gateway: always runs.
+    add_executable(facade_race_test tests/facade_race_test.cpp)
+    target_compile_features(facade_race_test PRIVATE cxx_std_20)
+    set_target_properties(facade_race_test PROPERTIES CXX_EXTENSIONS OFF)
+    target_link_libraries(facade_race_test PRIVATE websrt_warnings websrt Threads::Threads)
+    add_test(NAME facade_race_test COMMAND facade_race_test)
+    set_tests_properties(facade_race_test PROPERTIES TIMEOUT 120)
+
     endif()
 
     # consumer_test: the export-contract proof. It compiles in its own
