@@ -99,6 +99,7 @@ if(WEBSRT_BUILD_SHARED)
     add_library(websrt SHARED
         src/core/event_loop.cpp
         src/core/version.cpp
+        src/srt_session/receiver_core.cpp
         src/wt/capsule.cpp)
     set_target_properties(websrt PROPERTIES
         VERSION ${PROJECT_VERSION}
@@ -111,6 +112,7 @@ else()
     add_library(websrt STATIC
         src/core/event_loop.cpp
         src/core/version.cpp
+        src/srt_session/receiver_core.cpp
         src/wt/capsule.cpp)
 endif()
 add_library(websrt::websrt ALIAS websrt)
