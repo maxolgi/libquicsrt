@@ -78,8 +78,34 @@ public:
         target.path          = "/wt?publish=" + config.stream_name;
         target.cert_hash_hex = config.cert_sha256_hex;
 
-        srt_startup(); // refcounted; paired with srt_cleanup() in Teardown()
-        loop_.Start();
+        // Setup vs a concurrent Stop: a watchdog Stop can pass the
+        // ever_started_ gate above and run its full Teardown while this
+        // Start sits right here (CPU starvation makes the window real).
+        // That Teardown's loop_.Stop() no-ops on a loop that does not
+        // exist yet - so a loop started afterwards would outlive every
+        // guard: nothing would ever stop it, and its posted
+        // ConnectOnLoop would race the façade's destruction. Serialize
+        // the setup with Teardown's stop side and re-check the guard
+        // inside: either the loop comes up before any teardown (their
+        // loop_.Stop() then stops and joins it) or a teardown already
+        // ran and this Start skips the setup entirely.
+        bool setup_done = false;
+        {
+            const std::lock_guard<std::mutex> lock(setup_mutex_);
+            if (!torn_down_.load())
+            {
+                srt_startup(); // refcounted; paired with srt_cleanup() in Teardown()
+                srt_up_ = true;
+                loop_.Start();
+                setup_done = true;
+            }
+        }
+        if (!setup_done)
+        {
+            SetError("stopped before the event loop came up");
+            start_failed_ = true;
+            return kPublishConnectFailed;
+        }
         // Resolve on the calling thread - see the Subscriber façade: the
         // blocking DNS wait is the OS resolver's default budget, outside
         // connect_timeout_ms.
@@ -94,10 +120,16 @@ public:
         }
         if (!client_->Connect(target))
         {
-            SetError("target rejected (port nonzero, path nonempty, cert hash malformed)");
+            // Connect rejects the target itself (bad dial address, zero
+            // port) or finds the loop stopped under us - a concurrent
+            // Stop's teardown already ran. Only the first is about the
+            // target.
+            const bool stopped_during_start = torn_down_.load();
+            SetError(stopped_during_start ? "stopped during start"
+                                          : "target rejected (port nonzero, path nonempty, cert hash malformed)");
             start_failed_ = true;
             Teardown();
-            return kPublishInvalidTarget;
+            return stopped_during_start ? kPublishConnectFailed : kPublishInvalidTarget;
         }
 
         std::string why;
@@ -250,9 +282,18 @@ private:
         {
             return;
         }
+        // Under setup_mutex_ an in-flight Start is either past its setup
+        // (the loop exists and is joined here; srt_up_ says whose
+        // srt_startup() this cleanup pairs) or has not entered it yet
+        // (it then sees torn_down_ and skips the setup - no loop
+        // resurrection, no unpaired cleanup).
+        const std::lock_guard<std::mutex> lock(setup_mutex_);
         loop_.Stop();
         session_->Finalize();
-        srt_cleanup();
+        if (srt_up_)
+        {
+            srt_cleanup();
+        }
     }
 
     // Declaration order = destruction order REVERSED. Destruction must
@@ -271,6 +312,13 @@ private:
     bool              start_failed_ = false;
     std::atomic<bool> stopped_      = false;
     std::atomic<bool> torn_down_    = false;
+
+    // Serializes Start's setup (srt_startup + loop_.Start) against
+    // Teardown's stop side; srt_up_ records whether this façade's own
+    // srt_startup() ran, so the cleanup pairs exactly. Both only under
+    // setup_mutex_.
+    std::mutex setup_mutex_;
+    bool       srt_up_ = false;
 
     mutable std::mutex error_mutex_;
     std::string        last_error_;
