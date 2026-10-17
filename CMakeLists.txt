@@ -61,6 +61,13 @@ target_link_libraries(websrt_srt_deps INTERFACE srt_static)
 # (M0/CI): no BoringSSL, no lsquic.
 option(WEBSRT_ENABLE_WT "Build WebTransport support (lsquic + BoringSSL)" ON)
 
+# Receiver-only flavor: just the WT-free ReceiverCore over the srt fork.
+# No EventLoop (epoll/eventfd - Emscripten has neither), no capsule
+# framing, no tests or apps. This is the Emscripten consumer surface:
+# websrt-wasm-cpp configures deps/libwebsrt with emcmake and links
+# websrt::receiver-core + websrt::srt-deps.
+option(WEBSRT_RECEIVER_ONLY "Build only the WT-free receiver core (no event loop)" OFF)
+
 if(WEBSRT_ENABLE_WT)
     set(WEBSRT_BORINGSSL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/boringssl")
     set(WEBSRT_BORINGSSL_BUILD "${WEBSRT_BORINGSSL_DIR}/build")
@@ -95,6 +102,24 @@ endif()
 
 find_package(Threads REQUIRED)
 
+if(WEBSRT_RECEIVER_ONLY)
+    # Everything past this point (the full websrt target, WebTransport
+    # chain, tests, install rules) is native-consumer territory and skipped
+    # wholesale: the receiver-only flavor exports websrt::receiver-core and
+    # returns; its consumer (websrt-wasm-cpp under Emscripten) carries its
+    # own build gates.
+    add_library(websrt_receiver_core STATIC
+        src/srt_session/receiver_core.cpp)
+    add_library(websrt::receiver-core ALIAS websrt_receiver_core)
+    target_compile_features(websrt_receiver_core PUBLIC cxx_std_20)
+    set_target_properties(websrt_receiver_core PROPERTIES CXX_EXTENSIONS OFF)
+    target_include_directories(websrt_receiver_core PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(websrt_receiver_core
+        PUBLIC websrt_srt_deps
+        PRIVATE websrt_warnings Threads::Threads)
+    return()
+endif()
 if(WEBSRT_BUILD_SHARED)
     add_library(websrt SHARED
         src/core/event_loop.cpp
