@@ -11,7 +11,10 @@
 // session, but both halves share the one helper. Also gated: the Stop
 // contract - a Read parked on an idle session returns the end-of-stream
 // result when Stop lands on another thread, whichever side of the
-// receive slice the close hits (deterministic plus a raced loop).
+// receive slice the close hits (deterministic plus a raced loop). Also
+// gated: the publish happy path - SendMessage over an established pair
+// chunks at the negotiated payload and lands at the caller byte-identical,
+// with the tx stats live afterwards.
 //
 // Plain checks (not assert) so the test stays meaningful in Release.
 
@@ -19,11 +22,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "proto/constants.h"
 #include "srt_session/receiver_core.h"
@@ -311,6 +316,79 @@ void StopReadRace()
     }
 }
 
+// ---- (4) publish path: SendMessage loopback ----
+
+// The publish happy path: SendMessage frames the buffer into srt messages
+// of at most the NEGOTIATED payload (effectively 940 = 5 x 188, not the
+// configured 1128 - receiver_core.h), so 3 x 940 + 60 exercises three
+// full chunks plus a short final one. The caller reassembles the in-order
+// message stream (the ReceiveAll pattern) and byte-compares it EXACT.
+void SendMessageLoopback()
+{
+    constexpr int kChunkBytes = 940; // negotiated payload: 5 x 188
+    constexpr int kTotalBytes = 3 * kChunkBytes + 60;
+
+    WirePair                   w;
+    websrt::ReceiverCoreParams params;
+    if (!EstablishWirePair(w, params, 0))
+    {
+        TeardownWirePair(w);
+        return;
+    }
+
+    std::vector<std::uint8_t> data(static_cast<std::size_t>(kTotalBytes));
+    for (int i = 0; i < kTotalBytes; ++i)
+    {
+        data[static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(i);
+    }
+
+    const int accepted = w.core->SendMessage(reinterpret_cast<const char*>(data.data()),
+                                             static_cast<int>(data.size()),
+                                             kTimeoutMs);
+    Check([&] { return accepted == kTotalBytes; },
+          "SendMessage accepted the whole buffer (got " + std::to_string(accepted) + ")");
+
+    // Caller side: one srt message per chunk, in order; bounded receive
+    // slices under an overall deadline.
+    const int slice_ms = 250;
+    if (srt_setsockopt(w.caller, 0, SRTO_RCVTIMEO, &slice_ms, sizeof slice_ms) == SRT_ERROR)
+    {
+        Fail(std::string("caller SRTO_RCVTIMEO: ") + srt_getlasterror_str());
+    }
+    std::vector<std::uint8_t> got;
+    got.reserve(data.size());
+    char       rbuf[websrt::kSrtPayloadSize]; // >= 940: one chunk fits whole
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kTimeoutMs);
+    while (got.size() < data.size() && std::chrono::steady_clock::now() < deadline)
+    {
+        const int n = srt_recvmsg(w.caller, rbuf, static_cast<int>(sizeof rbuf));
+        if (n > 0)
+        {
+            got.insert(got.end(), rbuf, rbuf + n);
+            continue;
+        }
+        if (srt_getlasterror(nullptr) != SRT_ETIMEOUT)
+        {
+            Fail(std::string("caller recvmsg: ") + srt_getlasterror_str());
+            break;
+        }
+    }
+    Check([&] { return got.size() == data.size(); },
+          "caller received all bytes (got " + std::to_string(got.size()) + " of " + std::to_string(data.size()) + ")");
+    Check([&] { return got.size() == data.size() && std::memcmp(got.data(), data.data(), data.size()) == 0; },
+          "received stream is byte-identical to the sent buffer");
+
+    // The tx path the consumer's stats_map mirrors: instantaneous bistats
+    // on the accepted (sender) socket after the sends.
+    SRT_TRACEBSTATS st;
+    const bool      have_stats = w.core->Stats(&st);
+    Check([&] { return have_stats; }, "core Stats after publish");
+    Check([&] { return have_stats && st.pktSentTotal > 0; }, "tx pktSentTotal > 0 after publish");
+    Check([&] { return have_stats && st.byteSentTotal > 0; }, "tx byteSentTotal > 0 after publish");
+
+    TeardownWirePair(w);
+}
+
 } // namespace
 
 int main()
@@ -325,6 +403,7 @@ int main()
     SessionSeed();
     StopUnblocksRead();
     StopReadRace();
+    SendMessageLoopback();
 
     srt_cleanup();
     if (!g_ok)
