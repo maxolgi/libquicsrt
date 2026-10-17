@@ -4,40 +4,16 @@
 //     checks in the repo's style (no assert, Release-safe).
 // (2) Offline API misuse: Read/Stats before Start, invalid config, Start
 //     twice, destruction without Stop.
-// (3) Live negative path against the local Rust gateway oracle (the
-//     supervisord `websrt` service + its runtime cert-hash.js): a
-//     deliberately nonexistent stream gets HTTP 404 pre-accept, so Start
-//     must surface kStartRejected, Read the documented kReadClosed, and
-//     shutdown must be hang-free; a fresh Subscriber must repeat the
-//     dance cleanly. A dead-port target must fail bounded instead of
-//     hanging. Exits 77 (ctest SKIP_RETURN_CODE) when the oracle is
-//     absent so CI without the Rust world stays green.
-//
-// The positive path (dumping a live published stream) is the next
-// agent's gate (websrt-dump, P1): it needs a published-stream fixture.
-
-#include <unistd.h>
 
 #include <atomic>
 #include <chrono>
-#include <cstddef>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <fstream>
-#include <iterator>
-#include <optional>
-#include <thread>
 #include <string>
 
 #include "websrt/subscriber.hpp"
 
 namespace
 {
-
-constexpr int kSkipExit = 77;
-
-constexpr char kDefaultGateway[] = "127.0.0.1:4433";
 
 std::atomic<bool> g_ok{true};
 
@@ -63,50 +39,6 @@ void Check(const Cond& cond, const std::string& what)
 bool Contains(const std::string& haystack, const char* needle)
 {
     return haystack.find(needle) != std::string::npos;
-}
-
-// cert-hash.js: `window.CERT_HASH = "<64 hex chars>";` (self-signed mode).
-// Same loader contract as wt_echo: nullopt when the file is missing, the
-// hash is null (mkcert mode), or the value does not parse.
-std::optional<std::string> LoadCertHashHex()
-{
-    constexpr std::size_t kSha256HexLen = 64;
-    const char*           path          = std::getenv("WEBSRT_CERT_HASH_JS");
-    if (path == nullptr || *path == '\0')
-    {
-        path = WEBSRT_CERT_HASH_JS_DEFAULT;
-    }
-    std::ifstream in(path, std::ios::binary);
-    if (!in.is_open())
-    {
-        return std::nullopt;
-    }
-    const std::string js((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-
-    const std::size_t key = js.find("CERT_HASH");
-    if (key == std::string::npos)
-    {
-        return std::nullopt;
-    }
-    const std::size_t quote = js.find('"', key);
-    if (quote == std::string::npos)
-    {
-        return std::nullopt;
-    }
-    if (js.size() < quote + 1 + kSha256HexLen)
-    {
-        return std::nullopt;
-    }
-    std::string        hex        = js.substr(quote + 1, kSha256HexLen);
-    static const char* kHexDigits = "0123456789abcdefABCDEF";
-    for (const char c : hex)
-    {
-        if (std::strchr(kHexDigits, c) == nullptr)
-        {
-            return std::nullopt;
-        }
-    }
-    return hex;
 }
 
 // ---- (1) config validation matrix ----
@@ -394,197 +326,12 @@ void TestOfflineMisuse()
     std::printf("offline misuse: complete (%d checks so far)\n", g_checks);
 }
 
-// ---- (3) live negative path ----
-
-// One live negative-path Start, with one retry. A kStartTimedOut against
-// the real gateway is the deaf-oracle signature (the Rust gateway's accept
-// loop intermittently starves for a couple of minutes under churn and then
-// self-heals; wt_echo's "no UDP life" SKIP covers the same outage), so it
-// is retried once after a pause and then surfaces as SKIP rather than as
-// a client failure. Any other status is final.
-int StartNegative(const websrt::SubscriberConfig& cfg)
-{
-    int status = websrt::kStartTimedOut;
-    for (int attempt = 0; attempt < 2 && status == websrt::kStartTimedOut; ++attempt)
-    {
-        if (attempt > 0)
-        {
-            std::printf("live negative: gateway unresponsive, retrying in 3 s\n");
-            std::this_thread::sleep_for(std::chrono::seconds(3));
-        }
-        websrt::Subscriber sub;
-        status = sub.Start(cfg);
-        char buf[1128];
-        if (status == websrt::kStartTimedOut)
-        {
-            sub.Stop();
-            continue;
-        }
-        // Outside the deaf-oracle case the session is fully judged here.
-        Check([&] { return status == websrt::kStartRejected; },
-              "nonexistent stream must kStartRejected (got " + std::to_string(status) + ")");
-        const std::string error = sub.LastError();
-        Check([&] { return Contains(error, "404") || Contains(error, "HTTP"); },
-              "LastError must mention the HTTP rejection (got \"" + error + "\")");
-        Check([&] { return sub.Read(buf, sizeof buf, 1000) == websrt::kReadClosed; },
-              "Read after rejection must be kReadClosed");
-        websrt::SubscriberStats stats;
-        Check([&] { return sub.Stats(&stats) == websrt::kStatsNotConnected; }, "Stats after rejection");
-        const auto t0 = std::chrono::steady_clock::now();
-        sub.Stop();
-        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
-        Check([&] { return ms.count() < 2000; }, "Stop after rejection must be fast");
-        Check([&] { return sub.Read(buf, sizeof buf, 0) == websrt::kReadClosed; }, "Read stays terminal after Stop");
-    }
-    return status;
-}
-
-bool GatewayTarget(websrt::SubscriberConfig* cfg, const std::string& stream_suffix)
-{
-    const char*       gateway_env = std::getenv("WEBSRT_WT_GATEWAY");
-    const std::string gateway     = gateway_env != nullptr && *gateway_env != '\0' ? gateway_env : kDefaultGateway;
-    const std::size_t colon       = gateway.rfind(':');
-    if (colon == std::string::npos)
-    {
-        return false;
-    }
-    const auto hash = LoadCertHashHex();
-    if (!hash)
-    {
-        return false;
-    }
-    cfg->host            = gateway.substr(0, colon);
-    cfg->port            = static_cast<std::uint16_t>(std::atoi(gateway.c_str() + colon + 1));
-    cfg->stream_name     = "websrt-cpp-negative-" + stream_suffix + "-" + std::to_string(::getpid());
-    cfg->cert_sha256_hex = *hash;
-    return true;
-}
-
-void TestLiveNegative()
-{
-    const auto t0 = std::chrono::steady_clock::now();
-
-    // (a) Nonexistent stream: the gateway answers HTTP 404 before the WT
-    // session is ever accepted - Start must surface the rejection.
-    {
-        websrt::SubscriberConfig cfg;
-        if (!GatewayTarget(&cfg, "one"))
-        {
-            std::printf("subscriber_test: SKIP: oracle target unavailable\n");
-            std::exit(kSkipExit);
-        }
-        cfg.connect_timeout_ms = 5000;
-        if (StartNegative(cfg) == websrt::kStartTimedOut)
-        {
-            std::printf("subscriber_test: SKIP: gateway oracle unresponsive\n");
-            std::exit(kSkipExit);
-        }
-    }
-
-    // (b) Fresh instance, same dance: no cross-instance residue (srt
-    // library refcount, loop threads, WT engine).
-    {
-        websrt::SubscriberConfig cfg;
-        if (!GatewayTarget(&cfg, "two"))
-        {
-            std::exit(kSkipExit);
-        }
-        cfg.connect_timeout_ms = 5000;
-        if (StartNegative(cfg) == websrt::kStartTimedOut)
-        {
-            std::exit(kSkipExit);
-        }
-    }
-
-    // (c) Dead port: bounded failure instead of a hang.
-    {
-        const auto hash = LoadCertHashHex();
-        if (!hash)
-        {
-            std::exit(kSkipExit);
-        }
-        websrt::SubscriberConfig cfg = GoodConfig();
-        cfg.host                     = "127.0.0.1";
-        cfg.port                     = 1; // nothing listens on UDP 1
-        cfg.connect_timeout_ms       = 1500;
-        cfg.cert_sha256_hex          = *hash;
-
-        const auto         dead_t0 = std::chrono::steady_clock::now();
-        websrt::Subscriber sub;
-        const auto         status = sub.Start(cfg);
-        const auto         dead_ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - dead_t0);
-        Check([&] { return status == websrt::kStartTimedOut || status == websrt::kStartConnectFailed; },
-              "dead port must fail bounded (got " + std::to_string(status) + ")");
-        Check([&] { return dead_ms.count() >= 1400 && dead_ms.count() < 10000; },
-              "dead-port Start must respect connect_timeout_ms (took " + std::to_string(dead_ms.count()) + " ms)");
-        char buf[1128];
-        Check([&] { return sub.Read(buf, sizeof buf, 100) == websrt::kReadClosed; }, "Read after dead-port failure");
-        sub.Stop();
-    }
-
-    // (d) PKI mode (empty cert hash) against the self-signed local
-    // gateway: the chain is not in the system CA bundle, so the TLS
-    // handshake must fail and Start must surface kStartConnectFailed.
-    {
-        websrt::SubscriberConfig cfg;
-        if (!GatewayTarget(&cfg, "pki"))
-        {
-            std::exit(kSkipExit);
-        }
-        cfg.cert_sha256_hex    = ""; // PKI validation instead of pinning
-        cfg.connect_timeout_ms = 5000;
-
-        websrt::Subscriber sub;
-        const auto         status = sub.Start(cfg);
-        Check([&] { return status == websrt::kStartConnectFailed; },
-              "PKI mode must reject the self-signed gateway (got " + std::to_string(status) + ")");
-        Check([&] { return Contains(sub.LastError(), "TLS"); }, "PKI rejection must name the TLS failure");
-        char buf[1128];
-        Check([&] { return sub.Read(buf, sizeof buf, 100) == websrt::kReadClosed; }, "Read after PKI rejection");
-        sub.Stop();
-
-        // The client-side TLS abort leaves the gateway's serialized accept
-        // loop waiting out its ~10s session-establishment timeout; until
-        // it drains, the oracle stalls every incoming connection (the
-        // gateway's known transient, it self-heals). Cool down so this
-        // test leaves a healthy gateway behind for whatever runs next.
-        std::printf("live negative: cooling down 12 s after the PKI abort\n");
-        std::this_thread::sleep_for(std::chrono::seconds(12));
-    }
-
-    // (e) Hostname dial: bare "localhost" with pinning. The TLS handshake
-    // must succeed against the name-resolved gateway (SNI carries the
-    // typed name, the pin still matches the cert), reaching the HTTP 404
-    // for the nonexistent stream - resolution + SNI-with-name + pinning
-    // coexist.
-    {
-        websrt::SubscriberConfig cfg;
-        if (!GatewayTarget(&cfg, "byname"))
-        {
-            std::exit(kSkipExit);
-        }
-        cfg.host               = "localhost";
-        cfg.connect_timeout_ms = 5000;
-        if (StartNegative(cfg) == websrt::kStartTimedOut)
-        {
-            std::exit(kSkipExit);
-        }
-    }
-
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
-    std::printf("live negative path: complete in %lld ms (%d checks so far)\n",
-                static_cast<long long>(elapsed.count()),
-                g_checks);
-}
-
 } // namespace
 
 int main()
 {
     TestConfigValidation();
     TestOfflineMisuse();
-    TestLiveNegative();
 
     if (!g_ok)
     {

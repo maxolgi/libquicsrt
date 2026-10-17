@@ -1,8 +1,5 @@
 # CI for libwebsrt: plain build+test plus sanitizer coverage of the
-# always-run test set. The four live-oracle tests (wt_echo, c_api_test,
-# subscriber_test, publisher_test) self-skip via SKIP_RETURN_CODE 77 when
-# the Rust WebSRT gateway is absent, so every job runs plain ctest and
-# requires zero failures - skips do not fail.
+# full test set. Every job runs plain ctest and requires zero failures.
 
 name: ci
 

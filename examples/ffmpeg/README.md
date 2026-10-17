@@ -10,8 +10,8 @@ tree (pkg-config prefix `build/release/stage`, from
 
     ./build.sh setup && ./build.sh lib && ./build.sh install && ./build.sh ffmpeg
 
-Bumping the FFmpeg pin = update `FFMPEG_MASTER_COMMIT`, re-verify
-`./build.sh ffmpeg` + the golden gate.
+Bumping the FFmpeg pin = update `FFMPEG_MASTER_COMMIT` and re-verify
+`./build.sh ffmpeg`.
 
 ## URL grammar
 
@@ -32,7 +32,7 @@ Bumping the FFmpeg pin = update `FFMPEG_MASTER_COMMIT`, re-verify
   is given.
 - `latency_ms=N` — TSBPD latency floor (default 120).
 
-## The golden commands (P2 gate)
+## The golden commands
 
 Canonical form (works verbatim once the gateway host/port and cert are
 resolved):
@@ -58,10 +58,6 @@ Notes:
   fraction of a second and a live subscriber cannot join it).
 - `-t` goes **before** the output URL — a trailing `-t` after the last
   URL is a trailing option and gets ignored.
-- `scripts/ffmpeg_gate.sh` (or `./build.sh ffmpeg-gate`) runs exactly
-  this pair with a unique stream name per run, asserts exits 0, ffprobe
-  cleanliness (h264 + aac, ≥ 6 s), cross-checks with `websrt-dump`, and
-  runs the whole thing twice.
 
 ## Behavior details
 

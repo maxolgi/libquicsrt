@@ -1,7 +1,7 @@
 // WebTransport client over lsquic: one engine and one extended-CONNECT
 // session toward a WebSRT gateway, with WT datagrams both ways. The
-// proven spike disciplines live here (tests/wt_echo.cpp at the spike
-// commit): LSENG_HTTP + QUIC v1 + es_datagrams engine recipe, raw lsxpack
+// proven spike disciplines live here: LSENG_HTTP + QUIC v1 +
+// es_datagrams engine recipe, raw lsxpack
 // extended-CONNECT headers followed by an explicit flush, cert pinning by
 // SHA-256-of-DER, HTTP/1.x-style response parsing with the built-in header
 // interface, capsule skipping with CLOSE detection, and quarter-stream-id

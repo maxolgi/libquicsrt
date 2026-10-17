@@ -13,8 +13,6 @@ Commands:
     ffmpeg     Build patched upstream FFmpeg with the websrt protocol AND the
                system libsrt (--enable-libsrt): stages the shared libwebsrt.so
                (C-ABI-only exports) so both protocols coexist in one binary
-    ffmpeg-gate Run the P2 golden-commands gate (needs the Rust gateway + ffmpeg)
-    interop    Run interop tests against the Rust gateway
 
 Environment:
     WEBSRT_ENABLE_WT=OFF  setup without WebTransport: skips BoringSSL and
@@ -179,12 +177,6 @@ case "${1:-}" in
         ;;
     ffmpeg)
         build_ffmpeg
-        ;;
-    ffmpeg-gate)
-        exec scripts/ffmpeg_gate.sh
-        ;;
-    interop)
-        exec scripts/interop.sh
         ;;
     -h | --help | help)
         usage

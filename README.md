@@ -64,7 +64,7 @@ stats) and `apps/websrt-dump.cpp` for a complete subscriber example.
 
     ./build.sh setup     # one-time: submodule init/update (srt fork, lsquic), BoringSSL, cmake configure
     ./build.sh lib       # build libwebsrt (+ apps)
-    ./build.sh test      # unit + loopback + live interop tests
+    ./build.sh test      # unit + loopback tests
     ./build.sh ffmpeg    # patched FFmpeg with websrt:// AND system srt:// (see below)
 
 Requires gcc 13+, CMake 3.24+, ninja, nasm. The srt fork
@@ -91,11 +91,7 @@ one FFmpeg binary carries both protocols with zero shared symbols:
 
     ffmpeg -f mpegts -i websrt://gw:4433?stream=cam1 -c copy \
            -f mpegts srt://obs:9000?streamid=cam1     # both stacks, one process
-
-`./build.sh ffmpeg-gate` proves it end to end: after the golden
-publish/subscribe runs, one ffmpeg process bridges `websrt://` input to
-`srt://` output into the Rust gateway's UDP ingest and the loop closes
-through a `websrt://` subscriber.
+```
 
 The static flavor stays the default and unchanged — in-tree consumers
 (the C++ gateway, the internal tests) call the C++ API and the fork's

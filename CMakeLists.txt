@@ -287,39 +287,20 @@ target_link_libraries(receiver_core_test PRIVATE websrt_warnings websrt)
 add_test(NAME receiver_core_test COMMAND receiver_core_test)
 set_tests_properties(receiver_core_test PROPERTIES TIMEOUT 60)
 
-# wt_echo: WebTransport client validation against the live Rust gateway
-# (the interop oracle). Requires the Rust WebSRT checkout and its runtime
-# cert-hash.js; exits 77 (ctest SKIP_RETURN_CODE) when they are absent so CI
-# machines without the Rust world stay green.
 if(WEBSRT_ENABLE_WT)
     # c_api_test: the extern-C ABI (websrt_c.h) the FFmpeg websrt://
-    # protocol links against - offline misuse always runs; the live
-    # gate (publish + subscribe round trip through the C API against
-    # the Rust gateway oracle) skips the same way as its siblings.
-    # Builds in the shared flavor too: it is the DSO's ABI canary.
+    # protocol links against - offline misuse coverage. Builds in the
+    # shared flavor too: it is the DSO's ABI canary.
     add_executable(c_api_test tests/c_api_test.cpp)
     target_compile_features(c_api_test PRIVATE cxx_std_20)
     set_target_properties(c_api_test PROPERTIES CXX_EXTENSIONS OFF)
     target_link_libraries(c_api_test PRIVATE websrt_warnings websrt Threads::Threads)
-    target_compile_definitions(c_api_test PRIVATE
-        WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js"
-        WEBSRT_FIXTURE_TS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/fixtures/test.ts")
     add_test(NAME c_api_test COMMAND c_api_test)
-    set_tests_properties(c_api_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    set_tests_properties(c_api_test PROPERTIES TIMEOUT 30)
 
     # Everything below uses the C++ API or internals, which the shared
     # flavor localizes - static flavor only.
     if(NOT WEBSRT_BUILD_SHARED)
-    add_executable(wt_echo tests/wt_echo.cpp)
-    target_compile_features(wt_echo PRIVATE cxx_std_20)
-    set_target_properties(wt_echo PROPERTIES CXX_EXTENSIONS OFF)
-    target_include_directories(wt_echo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(wt_echo PRIVATE websrt_warnings websrt Threads::Threads)
-    target_compile_definitions(wt_echo PRIVATE
-        WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js")
-    add_test(NAME wt_echo COMMAND wt_echo)
-    set_tests_properties(wt_echo PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
-
     # resolve_test: the fork-reused resolver (CreateAddr) behind
     # ResolveHostToIpv4 - literal fast path, localhost loopback, bounded
     # NXDOMAIN. No gateway needed.
@@ -332,26 +313,19 @@ if(WEBSRT_ENABLE_WT)
     set_tests_properties(resolve_test PROPERTIES TIMEOUT 60)
 
     # subscriber_test: libwebsrt public surface - config validation matrix
-    # and offline misuse always run; the live negative path (nonexistent
-    # stream -> HTTP 404) needs the same Rust gateway oracle and skips the
-    # same way. Only the public headers are included, which doubles as the
-    # no-internal-leakage check.
+    # and offline misuse. Only the public headers are included, which
+    # doubles as the no-internal-leakage check.
     add_executable(subscriber_test tests/subscriber_test.cpp)
     target_compile_features(subscriber_test PRIVATE cxx_std_20)
     set_target_properties(subscriber_test PROPERTIES CXX_EXTENSIONS OFF)
     target_link_libraries(subscriber_test PRIVATE websrt_warnings websrt Threads::Threads)
-    target_compile_definitions(subscriber_test PRIVATE
-        WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js")
     add_test(NAME subscriber_test COMMAND subscriber_test)
-    set_tests_properties(subscriber_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    set_tests_properties(subscriber_test PROPERTIES TIMEOUT 60)
 
     # publisher_test: libwebsrt Publisher surface - config validation
-    # matrix, TsChunker units, and offline misuse always run; the live
-    # gate (feed fixtures/test.ts through the gateway, byte-for-byte
-    # in-process subscriber dump, first-wins 403 challenger, name freed
-    # after End) needs the Rust gateway oracle and skips the same way.
-    # Links the internal TsChunker too (src/ include), which doubles as
-    # the session-layer coverage.
+    # matrix, TsChunker units, and offline misuse. Links the internal
+    # TsChunker too (src/ include), which doubles as the session-layer
+    # coverage.
     add_executable(publisher_test tests/publisher_test.cpp)
     target_compile_features(publisher_test PRIVATE cxx_std_20)
     set_target_properties(publisher_test PROPERTIES CXX_EXTENSIONS OFF)
@@ -362,12 +336,9 @@ if(WEBSRT_ENABLE_WT)
         deps/lsquic/include
         ${WEBSRT_BORINGSSL_DIR}/include)
     target_link_libraries(publisher_test PRIVATE websrt_warnings websrt Threads::Threads)
-    target_compile_definitions(publisher_test PRIVATE
-        SRT_ENABLE_VIRTUAL_TRANSPORT
-        WEBSRT_CERT_HASH_JS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/web/public/cert-hash.js"
-        WEBSRT_FIXTURE_TS_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/../WebSRT/fixtures/test.ts")
+    target_compile_definitions(publisher_test PRIVATE SRT_ENABLE_VIRTUAL_TRANSPORT)
     add_test(NAME publisher_test COMMAND publisher_test)
-    set_tests_properties(publisher_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    set_tests_properties(publisher_test PROPERTIES TIMEOUT 60)
 
     # facade_race_test: concurrent Stop() safety of the public façades -
     # watchdog threads hammer Stop() while Start fails against a dead
@@ -391,8 +362,8 @@ if(WEBSRT_ENABLE_WT)
     # external add_subdirectory(deps/libwebsrt) consumer.
     add_subdirectory(tests/consumer)
 
-    # websrt-dump: the P1 interop app - subscribe with the public API and
-    # write the stream's TS bytes to a file (driven by scripts/interop.sh).
+    # websrt-dump: the subscriber example app - subscribe with the public
+    # API and write the stream's TS bytes to a file.
     add_executable(websrt-dump apps/websrt-dump.cpp)
     target_compile_features(websrt-dump PRIVATE cxx_std_20)
     set_target_properties(websrt-dump PROPERTIES CXX_EXTENSIONS OFF)

@@ -1,7 +1,6 @@
 // websrt-dump: subscribe to a WebSRT stream with libwebsrt and write the
 // received MPEG-TS bytes to a file - the native counterpart of the browser
-// player, and the P1 interop tool (scripts/interop.sh compares the dump
-// byte-for-byte against the published fixture).
+// player.
 //
 // Usage:
 //   websrt-dump --host 127.0.0.1 --port 4433 --stream NAME --out FILE
@@ -330,7 +329,7 @@ int main(int argc, char** argv)
     // Start with --wait-stream retry. The gateway answers HTTP 404 until a
     // publisher registers the stream; each attempt needs a fresh Subscriber
     // (single-shot instances). kStartTimedOut is retried too - the local
-    // oracle's accept loop stalls transiently - but only within the window.
+    // gateway's accept loop stalls transiently - but only within the window.
     const auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(wait_stream_s);
     std::unique_ptr<websrt::Subscriber> sub;
     for (;;)

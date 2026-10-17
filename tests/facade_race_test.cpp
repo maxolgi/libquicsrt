@@ -26,11 +26,11 @@
 //     concurrently in this same process, must still fail typed and tear
 //     down cleanly.
 // (d) publisher Write vs Stop on the offline states: the blocked-send
-//     case needs a connected session, i.e. the live oracle (publisher_test
-//     covers it there), but every Write state reachable without a gateway
-//     - never-started, start-failed (Stop hammering through the failure
-//     teardown), already-stopped - must return its typed result promptly:
-//     never consuming the Write budget, never a positive accept.
+//     case needs a connected session, but every Write state reachable
+//     without a gateway - never-started, start-failed (Stop hammering
+//     through the failure teardown), already-stopped - must return its
+//     typed result promptly: never consuming the Write budget, never a
+//     positive accept.
 //
 // Reproduction note: the double-run window of the old check-then-act
 // guards is a bare load/store pair - nanoseconds wide, found by code
@@ -264,12 +264,11 @@ void TestCanaryCleanSessions()
 // ---- (d) publisher Write vs Stop on the offline states ----
 
 // Write's blocking domain proper - srt_sendmsg2 parked on a full send
-// buffer - needs a connected session, i.e. the live oracle (publisher_test
-// covers it there). Offline a Write can only sit in the façade's state
-// checks, and each must return its typed result promptly while Stop is
-// concurrent or already effected: a budget-consuming wait or a positive
-// accept there would mean the state checks consult something that
-// outlives Stop's teardown.
+// buffer - needs a connected session (not covered offline). Offline a
+// Write can only sit in the façade's state checks, and each must return
+// its typed result promptly while Stop is concurrent or already effected:
+// a budget-consuming wait or a positive accept there would mean the state
+// checks consult something that outlives Stop's teardown.
 void TestPublisherWriteStates()
 {
     char buf[1128];
