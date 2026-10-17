@@ -39,6 +39,21 @@ constexpr int BufferPackets(int latency_ms)
     return static_cast<int>(std::clamp(needed, 8192LL, 320000LL));
 }
 
+// The SRTO_INITIAL_RTT seed: an explicitly configured initial_rtt_ms (> 0)
+// overrides the transport-measured RTT, passing through the same 1..30000
+// ms bounds the measured seed is clamped to (the public config validation
+// already guarantees them). measured_ms arrives already clamped; 0 =
+// unmeasured (leave srt's default estimator). One home so the subscriber
+// and publisher listener halves cannot drift apart.
+inline int InitialRttSeedMs(int configured_ms, int measured_ms)
+{
+    if (configured_ms > 0)
+    {
+        return static_cast<int>(std::clamp<long long>(configured_ms, 1, 30000));
+    }
+    return measured_ms;
+}
+
 } // namespace websrt
 
 #endif // WEBSRT_PROTO_CONSTANTS_H

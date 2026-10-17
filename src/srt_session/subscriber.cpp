@@ -45,8 +45,10 @@ void SubscriberSession::OnSessionReady()
 {
     wt_ready_.store(true, std::memory_order_relaxed);
 
-    // Seed SRTO_INITIAL_RTT from the WT layer's smoothed RTT (bounds:
-    // 1..30000 ms; 0 = unmeasured, leave srt's default estimator).
+    // Automatic RTT seed: the WT layer's smoothed RTT (bounds: 1..30000
+    // ms; 0 = unmeasured, leave srt's default estimator). A nonzero
+    // params.initial_rtt_ms overrides it - the core applies the
+    // preference (InitialRttSeedMs).
     const auto rtt_us      = client_->SmoothedRtt().count();
     const int  measured_ms = rtt_us > 0
                                  ? static_cast<int>(std::clamp<long long>(rtt_us / 1000, 1, 30000))

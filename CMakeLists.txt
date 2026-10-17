@@ -268,6 +268,22 @@ target_compile_definitions(loopback_srt PRIVATE SRT_ENABLE_VIRTUAL_TRANSPORT)
 target_link_libraries(loopback_srt PRIVATE websrt_warnings Threads::Threads srt_static)
 add_test(NAME loopback_srt COMMAND loopback_srt)
 
+# ReceiverCore session coverage: the WT-free receiver half driven end to
+# end against a raw forked-srt initiator over an in-memory wire pair (the
+# M0 pattern with the core as the listener half) - here proving the
+# SRTO_INITIAL_RTT seed selection (explicit params.initial_rtt_ms override
+# vs the transport-measured RTT) via the accepted socket's pre-data msRTT
+# readback, plus the pure selection units shared with the publisher half
+# (whose socket application needs a live WebTransport session). Links
+# websrt: receiver_core.cpp plus the srt fork surface ride its PUBLIC
+# deps.
+add_executable(receiver_core_test tests/receiver_core_test.cpp)
+target_compile_features(receiver_core_test PRIVATE cxx_std_20)
+set_target_properties(receiver_core_test PROPERTIES CXX_EXTENSIONS OFF)
+target_link_libraries(receiver_core_test PRIVATE websrt_warnings websrt)
+add_test(NAME receiver_core_test COMMAND receiver_core_test)
+set_tests_properties(receiver_core_test PROPERTIES TIMEOUT 60)
+
 # wt_echo: WebTransport client validation against the live Rust gateway
 # (the interop oracle). Requires the Rust WebSRT checkout and its runtime
 # cert-hash.js; exits 77 (ctest SKIP_RETURN_CODE) when they are absent so CI

@@ -7,8 +7,10 @@
 // the fixed teardown order) - see receiver_core.h for the threading and
 // lifetime rules; this adapter adds exactly the WT specifics:
 //
-//   - OnSessionReady seeds SRTO_INITIAL_RTT from the WT layer's smoothed
-//     RTT (lsquic_conn_get_info) and starts the core's listener.
+//   - OnSessionReady derives the automatic SRTO_INITIAL_RTT seed from
+//     the WT layer's smoothed RTT (lsquic_conn_get_info) and starts the
+//     core's listener; a nonzero params.initial_rtt_ms overrides the
+//     seed (the core applies the preference).
 //   - WT close reasons map to graceful/end-of-stream vs error
 //     (ReasonIsCleanEnd).
 //   - RequestClose closes the WT session gracefully; the resulting

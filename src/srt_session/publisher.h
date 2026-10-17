@@ -20,7 +20,8 @@
 //   SRTO_PEERLATENCY    params.tsbpd_latency_ms
 //   SRTO_SNDBUF/SRTO_RCVBUF  latency-scaled packets x 1472 bytes
 //   SRTO_SKIP_INDUCTION 1 (listener accepts Conclusion-first)
-//   SRTO_INITIAL_RTT    QUIC smoothed RTT clamped to 1..30000 ms
+//   SRTO_INITIAL_RTT    params.initial_rtt_ms when explicitly set, else
+//                       the QUIC smoothed RTT clamped to 1..30000 ms
 //
 // Write path: the app thread hands over arbitrary-size buffers; TsChunker
 // (below) frames them into <= payload-size, 188-aligned live messages and
@@ -96,7 +97,8 @@ struct PublisherSessionParams
 {
     int payload_size     = kSrtPayloadSize; // 6 x 188 TS packets; HSv5 negotiates min(gateway, listener)
     int tsbpd_latency_ms = 120;             // srt-wasm publisher default; TSBPD = max(sender, receiver)
-    // 0 = seed from the WT layer's smoothed RTT at session-ready time.
+    // > 0 overrides the WT layer's smoothed RTT as the seed; 0 = seed
+    // from it at session-ready time.
     int initial_rtt_ms = 0;
 };
 

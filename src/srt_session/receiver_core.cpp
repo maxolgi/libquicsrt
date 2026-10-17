@@ -79,9 +79,11 @@ bool ReceiverCore::Start(int measured_rtt_ms, std::string* error)
         ok = ok && SetOptInt(listener, SRTO_SNDBUF, buf_pkts * kBytesPerPacket);
         ok = ok && SetOptInt(listener, SRTO_RCVBUF, buf_pkts * kBytesPerPacket);
         ok = ok && SetOptInt(listener, SRTO_SKIP_INDUCTION, 1);
-        if (measured_rtt_ms > 0)
+        // An explicit params_.initial_rtt_ms overrides the measured seed.
+        const int rtt_seed = InitialRttSeedMs(params_.initial_rtt_ms, measured_rtt_ms);
+        if (rtt_seed > 0)
         {
-            ok = ok && SetOptInt(listener, SRTO_INITIAL_RTT, measured_rtt_ms);
+            ok = ok && SetOptInt(listener, SRTO_INITIAL_RTT, rtt_seed);
         }
         if (!ok)
         {

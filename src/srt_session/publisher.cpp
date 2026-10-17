@@ -239,13 +239,11 @@ bool PublisherSession::StartListener(std::string* error)
 
     const int rtt_ms = [this]
     {
-        const auto rtt_us = client_->SmoothedRtt().count();
-        if (rtt_us <= 0)
-        {
-            return 0; // unmeasured: leave srt's default estimator
-        }
-        // SRTO_INITIAL_RTT bounds: 1..30000 ms.
-        return static_cast<int>(std::clamp<long long>(rtt_us / 1000, 1, 30000));
+        const auto rtt_us      = client_->SmoothedRtt().count();
+        const int  measured_ms = rtt_us > 0 ? static_cast<int>(std::clamp<long long>(rtt_us / 1000, 1, 30000))
+                                            : 0; // unmeasured: leave srt's default estimator
+        // An explicit params_.initial_rtt_ms overrides the measured seed.
+        return InitialRttSeedMs(params_.initial_rtt_ms, measured_ms);
     }();
 
     do

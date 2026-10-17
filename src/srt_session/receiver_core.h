@@ -22,8 +22,9 @@
 //   SRTO_SNDBUF         snd packets * 1472 bytes (SRTO_SNDBUF is in BYTES)
 //   SRTO_RCVBUF         rcv packets * 1472 bytes
 //   SRTO_SKIP_INDUCTION 1 (listener accepts a Conclusion-first handshake)
-//   SRTO_INITIAL_RTT    measured RTT clamped to 1..30000 ms, when
-//                       supplied (skipped when 0)
+//   SRTO_INITIAL_RTT    params.initial_rtt_ms when explicitly set, else
+//                       the measured RTT clamped to 1..30000 ms
+//                       (skipped when 0)
 //
 // Buffer depth mirrors the browser receiver: latency-scaled packets count
 // clamp(latency_ms * 40, 8192, 320000) for both directions.
@@ -94,7 +95,8 @@ struct ReceiverCoreParams
 {
     int payload_size     = kSrtPayloadSize; // 6 x 188 TS packets; HSv5 negotiates min(gateway, listener)
     int tsbpd_latency_ms = 120;             // gateway ingest default; TSBPD = max(sender, receiver)
-    // 0 = seed from the transport's measured RTT at Start time.
+    // > 0 overrides the transport-measured RTT as the seed; 0 = seed
+    // from the measured RTT at Start time.
     int initial_rtt_ms = 0;
 };
 
@@ -133,7 +135,8 @@ public:
 
     // Builds the listener (socket, options, transport attach, bind-less
     // listen) and spawns the accept thread. measured_rtt_ms (already
-    // clamped to 1..30000, 0 = unmeasured) seeds SRTO_INITIAL_RTT.
+    // clamped to 1..30000, 0 = unmeasured) seeds SRTO_INITIAL_RTT
+    // unless params_.initial_rtt_ms overrides it.
     // Returns false with *error set on a genuine setup failure (also
     // recorded as the close reason); a concurrent MarkLocalStop unwinds
     // silently and returns false with *error empty - the pending local
