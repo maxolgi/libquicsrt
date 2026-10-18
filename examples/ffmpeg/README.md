@@ -41,10 +41,11 @@ resolved):
            -c:v libx264 -preset veryfast -c:a aac -f mpegts websrt://gw:443?stream=test
     ffmpeg -f mpegts -i websrt://gw:443?stream=test -c copy out.ts
 
-Locally (Rust gateway under supervisord: WebTransport UDP 127.0.0.1:4433,
-health 9091; pin its runtime `cert-hash.js` directly):
+Locally, run the pair against the supervised gateway (see AGENTS.md
+"Live gateway (supervisord)": read the live config for the actual port
+and cert file — never launch an ad-hoc gateway):
 
-    CERT_JS=$HOME/maxolgi/WebSRT/web/public/cert-hash.js
+    CERT_JS=<the gateway's runtime cert-hash.js, per its supervised config>
     URL="websrt://127.0.0.1:4433?stream=test&cert_hash_file=$CERT_JS"
 
     ./deps/ffmpeg/ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \

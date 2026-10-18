@@ -21,6 +21,25 @@ FFmpeg's `websrt://` protocol, talking to any WebSRT gateway.
 - Toolchain: gcc 13+, CMake 3.24+, ninja, nasm and go (BoringSSL),
   zlib1g-dev.
 
+## Live gateway (supervisord)
+
+The host's gateway runs under supervisord, together with an always-on test
+publisher (`websrt-cpp`, `websrt-cpp-testpub`). All live testing — golden
+acceptance commands, parity measurements, /health and /stats curls, the
+player page — goes through these services. Never launch ad-hoc
+`websrt-gateway` processes (bare runs, /tmp dev configs): read the live
+configs instead (`supervisorctl status`, then the --config the program entry
+names) to learn ports, binds, and the allowlist — don't guess from the repo.
+
+- Apply changes (agents may, sudo works): hot-reloadable config edit →
+  `sudo kill -HUP $(pidof websrt-gateway)`; restart-required edit or a
+  rebuild → `sudo supervisorctl restart websrt-cpp`; test stream →
+  `sudo supervisorctl restart websrt-cpp-testpub` (never run the testpub
+  script directly).
+- ctest suites are the exception: they are fully offline (in-process
+  sessions over in-memory wire pairs — no gateway process at all) and
+  never touch the supervised services.
+
 ## Dependencies (deps/)
 
 - `deps/srt` — submodule: the fork `maxolgi/srt`, branch `websrt`
