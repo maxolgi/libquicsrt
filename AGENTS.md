@@ -30,9 +30,8 @@ https://127.0.0.1:8443/cert-hash.js`.
 
 ## Dependencies (deps/)
 
-- `deps/srt` — submodule: the fork `maxolgi/srt`, branch `websrt`
-  (remote keeps the old name — don't "fix" .gitmodules; virtual
-  transport instead of OS sockets, no built-in crypto). Bumps
+- `deps/srt` — submodule: the fork `maxolgi/srt`, branch `quicsrt`
+  (virtual transport instead of OS sockets, no built-in crypto). Bumps
   are normal commits: "Bump deps/srt to <sha>: ...".
 - `deps/lsquic` — submodule (fetches ls-qpack/ls-hpack recursively).
 - `deps/boringssl` and `deps/ffmpeg` — fetched at pinned commits by
