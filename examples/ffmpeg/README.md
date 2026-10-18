@@ -31,6 +31,10 @@ Bumping the FFmpeg pin = update `FFMPEG_MASTER_COMMIT` and re-verify
 - `pki=1` — normal PKI validation. **Default** when no cert parameter
   is given.
 - `latency_ms=N` — TSBPD latency floor (default 120).
+- All parameters are also protocol AVOptions (e.g. `ffmpeg -stream NAME
+  -i websrt://gw:4435`); a URL parameter takes precedence over the
+  option value. String values are percent-decoded
+  (`cert_hash_file=/tmp/a%20b.js`); `pki=1` is the only accepted value.
 
 ## The golden commands
 
@@ -65,10 +69,13 @@ Notes:
 
 - Writes accept any buffer size (mpegts muxer bursts); the library
   frames TS bytes into 188-aligned SRT live messages ≤ 1128 bytes.
-  A write stalls longer than 30 s fails the output.
+  A write stalled longer than 30 s fails the output.
 - Reads deliver one SRT message at a time through an internal bounce
   buffer, so any caller buffer size works; the protocol blocks (1 s
   poll granularity) and a 15 s dataless stall fails the input.
+- The generic `rw_timeout` (ffmpeg `-timeout`, microseconds) overrides
+  both stall bounds; the AVIO interrupt callback is honored throughout
+  open/read/write, so Ctrl+C stays responsive inside those windows.
 - A subscribing open retries the gateway's HTTP 404 for up to 20 s
   (live-edge join while a broadcast is starting); after that it fails.
 - Close on the output does a graceful stream end (flush + ACK drain +

@@ -1,6 +1,6 @@
-From 39ef037c78a86cf2aec37e1f0815812d2cb69bc9 Mon Sep 17 00:00:00 2001
+From bd6c9e8c90fea54369f56bdef9b26bcdea481cfb Mon Sep 17 00:00:00 2001
 From: maxolgi <maxolgi@users.noreply.github.com>
-Date: Tue, 13 Oct 2026 00:02:50 -0400
+Date: Sat, 17 Oct 2026 22:47:57 -0400
 Subject: [PATCH] avformat: add websrt:// protocol (WebSRT via libwebsrt)
 
 Publish (output) or subscribe (input) to a WebSRT gateway - SRT over
@@ -14,7 +14,9 @@ cert_hash pins the gateway certificate (SHA-256 of the DER, 64 hex
 chars) the way browsers pin self-signed WebTransport servers;
 cert_hash_file reads the gateway's runtime cert-hash.js and uses its
 window.CERT_HASH value ("<hex>" pins, null means PKI); with no cert
-parameter the protocol uses normal PKI validation.
+parameter the protocol uses normal PKI validation. All parameters are
+also protocol AVOptions; a URL parameter takes precedence over the
+option value.
 
 MPEG-TS bytes are framed by the library into 188-aligned SRT live
 messages of at most 1128 bytes; reads bounce through an internal
@@ -23,12 +25,21 @@ contract.
 
 Subscribing retries HTTP 404 and transient transport stalls (live-edge
 join); publishing retries a stalled start once. A stalled peer bounds
-writes to 30 s and reads to 15 s.
+writes to 30 s and reads to 15 s (the generic rw_timeout overrides
+both); the AVIO interrupt callback is honored throughout.
 
 Signed-off-by: maxolgi <maxolgi@users.noreply.github.com>
 ---
+ configure                 |   5 +
+ doc/protocols.texi        |  34 ++
+ libavformat/Makefile      |   1 +
+ libavformat/protocols.c   |   1 +
+ libavformat/websrtproto.c | 690 ++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 731 insertions(+)
+ create mode 100644 libavformat/websrtproto.c
+
 diff --git a/configure b/configure
-index c97ddb18..6f665eee 100755
+index c97ddb18..c259d530 100755
 --- a/configure
 +++ b/configure
 @@ -302,6 +302,7 @@ External library support:
@@ -60,15 +71,15 @@ index c97ddb18..6f665eee 100755
  enabled libwebp           && {
      enabled libwebp_encoder      && require_pkg_config libwebp "libwebp >= 0.2.0" webp/encode.h WebPGetEncoderVersion
      enabled libwebp_anim_encoder && check_pkg_config libwebp_anim_encoder "libwebpmux >= 0.4.0" webp/mux.h WebPAnimEncoderOptionsInit; }
-+enabled libwebsrt         && require_pkg_config libwebsrt websrt websrt/websrt_c.h websrt_publisher_create
++enabled libwebsrt         && require_pkg_config libwebsrt "websrt >= 0.1.0" websrt/websrt_c.h websrt_publisher_create
  enabled libx264           && require_pkg_config libx264 x264 "stdint.h x264.h" x264_encoder_encode &&
                               require_cpp_condition libx264 x264.h "X264_BUILD >= 155" && {
                               [ "$toolchain" != "msvc" ] ||
 diff --git a/doc/protocols.texi b/doc/protocols.texi
-index 7812d154..46d98daa 100644
+index 7812d154..2b2a2847 100644
 --- a/doc/protocols.texi
 +++ b/doc/protocols.texi
-@@ -2589,6 +2589,38 @@ SOCK_SEQPACKET). If greater than zero, this value is used as
+@@ -2589,6 +2589,40 @@ SOCK_SEQPACKET). If greater than zero, this value is used as
  @code{max_packet_size}. Ignored for SOCK_STREAM. Default is @code{0}.
  @end table
  
@@ -78,7 +89,9 @@ index 7812d154..46d98daa 100644
 +libwebsrt library. An output publishes the stream name toward the gateway,
 +an input subscribes to it, so the same URL works verbatim on both sides.
 +The protocol carries MPEG-TS bytes, framed by the library into 188-aligned
-+SRT live messages of at most 1128 bytes.
++SRT live messages of at most 1128 bytes. Stalled reads and writes fail
++after the generic @option{rw_timeout} when set (defaults: 15 s for a
++dataless read, 30 s for a backpressured write).
 +
 +The required syntax for a WebSRT URL is:
 +@example
@@ -133,10 +146,10 @@ index aea09da4..ba1ceb95 100644
  extern const URLProtocol ff_librist_protocol;
 diff --git a/libavformat/websrtproto.c b/libavformat/websrtproto.c
 new file mode 100644
-index 00000000..b43c99e8
+index 00000000..664d97c7
 --- /dev/null
 +++ b/libavformat/websrtproto.c
-@@ -0,0 +1,512 @@
+@@ -0,0 +1,690 @@
 +/*
 + * This file is part of FFmpeg.
 + *
@@ -173,6 +186,11 @@ index 00000000..b43c99e8
 + *                        parameter is given)
 + *   latency_ms=N         TSBPD latency floor (default 120)
 + *
++ * These parameters are also available as protocol AVOptions,
++ * settable through the options dictionary (e.g. 'ffmpeg -stream
++ * NAME'); a parameter given in the URL query takes precedence over
++ * the option value (http.c convention).
++ *
 + * Direction decides semantics: an OUTPUT (AVIO_FLAG_WRITE) publishes
 + * the stream name toward the gateway; an INPUT subscribes to it. The
 + * same URL works verbatim as ffmpeg output and input.
@@ -186,8 +204,11 @@ index 00000000..b43c99e8
 + * one message).
 + *
 + * All calls block on the library's session thread; a stalled peer
-+ * bounds url_write to 30 s and a dataless url_read to 15 s before
-+ * failing, so a dead gateway cannot hang ffmpeg forever.
++ * bounds url_write to 30 s and a dataless url_read to 15 s (defaults;
++ * the generic rw_timeout option overrides both) before failing, so a
++ * dead gateway cannot hang ffmpeg forever. The AVIO interrupt
++ * callback is honored throughout open/read/write, keeping Ctrl+C
++ * responsive even inside those bounds.
 + */
 +
 +#include <stdlib.h>
@@ -198,11 +219,13 @@ index 00000000..b43c99e8
 +#include "libavutil/file_open.h"
 +#include "libavutil/log.h"
 +#include "libavutil/mem.h"
++#include "libavutil/opt.h"
 +#include "libavutil/parseutils.h"
 +#include "libavutil/time.h"
 +
 +#include "avformat.h"
 +#include "url.h"
++#include "urldecode.h"
 +
 +#include "websrt/websrt_c.h"
 +
@@ -217,8 +240,10 @@ index 00000000..b43c99e8
 +#define WEBSRT_OPEN_RETRY_MS 20000
 +#define WEBSRT_OPEN_RETRY_DELAY_US 500000
 +
-+/* Per-call budgets: publisher writes block under SRT backpressure
-+ * (timeout below), reads poll; both get an overall stall bound. */
++/* Default stall bounds: publisher writes block under SRT backpressure
++ * (timeout below), reads poll; both get an overall stall bound. The
++ * generic rw_timeout option (microseconds) overrides the two bounds
++ * when set. */
 +#define WEBSRT_IO_TIMEOUT_MS 1000
 +#define WEBSRT_WRITE_BUDGET_US 30000000
 +#define WEBSRT_READ_STALL_US 15000000
@@ -228,13 +253,20 @@ index 00000000..b43c99e8
 +#define WEBSRT_STATS_INTERVAL_US 5000000
 +
 +typedef struct WebSRTContext {
++    const AVClass        *class;
 +    websrt_publisher_t  *pub;
 +    websrt_subscriber_t *sub;
 +    int                  is_output;
 +
-+    /* Parsed URL state. */
-+    char                 cert_hash[2 * 32 + 1]; /* "" = PKI */
-+    int                  latency_ms;
++    /* AVOption-backed parameters. Effective values after the merge in
++     * websrt_parse_options: a URL-query parameter overrides the option
++     * value; cert_hash holds the pinned hash (NULL = PKI) once the
++     * optional cert_hash_file has been read. */
++    char                *stream;
++    char                *cert_hash;
++    char                *cert_hash_file;
++    int                  pki;
++    int                  latency_ms;    /* 0 = library default (120) */
 +
 +    /* Read bounce: one SRT message at a time, served to any caller
 +     * buffer size. */
@@ -246,6 +278,25 @@ index 00000000..b43c99e8
 +    int64_t              bytes_out;
 +    int64_t              last_stats_us;
 +} WebSRTContext;
++
++#define D AV_OPT_FLAG_DECODING_PARAM
++#define E AV_OPT_FLAG_ENCODING_PARAM
++#define OFFSET(x) offsetof(WebSRTContext, x)
++static const AVOption websrt_options[] = {
++    { "stream",         "Stream name to publish (output) or subscribe to (input)",   OFFSET(stream),          AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0,        .flags = D|E },
++    { "cert_hash",      "SHA-256 of the gateway cert DER (64 hex chars) to pin",     OFFSET(cert_hash),       AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0,        .flags = D|E },
++    { "cert_hash_file", "cert-hash.js to read the pin (or PKI) from at open",        OFFSET(cert_hash_file),  AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0,        .flags = D|E },
++    { "pki",            "Use normal PKI certificate validation",                     OFFSET(pki),             AV_OPT_TYPE_BOOL,   { .i64 = 0 },    0, 1,        .flags = D|E },
++    { "latency_ms",     "TSBPD latency floor in milliseconds (0 = library default)", OFFSET(latency_ms),      AV_OPT_TYPE_INT,    { .i64 = 0 },    0, 86400000, .flags = D|E },
++    { NULL }
++};
++
++static const AVClass websrt_class = {
++    .class_name = "websrt",
++    .item_name  = av_default_item_name,
++    .option     = websrt_options,
++    .version    = LIBAVUTIL_VERSION_INT,
++};
 +
 +static int websrt_is_hex_64(const char *s)
 +{
@@ -296,7 +347,12 @@ index 00000000..b43c99e8
 +            size += n;
 +        }
 +        if (n < sizeof(buf))
-+            break; /* short read: EOF or error, either way stop */
++            break; /* short read: EOF unless ferror() flags an error */
++    }
++    if (ferror(f)) {
++        av_log(h, AV_LOG_ERROR, "cert_hash_file: read error on '%s'\n", path);
++        ret = AVERROR(EIO);
++        goto out;
 +    }
 +
 +    key = size ? av_strnstr(js, "CERT_HASH", size) : NULL;
@@ -339,14 +395,42 @@ index 00000000..b43c99e8
 +    return ret;
 +}
 +
++/* Percent-decode a URL query parameter value into *out (av_malloc'd).
++ * A '%' not followed by two hex digits fails the open instead of
++ * passing through silently, so a mistyped escape cannot name a wrong
++ * file or stream. '+' decodes to ' ', matching how query parameter
++ * values are decoded throughout (decode_plus_sign = 1, as in
++ * ff_parse_opts_from_query_string in utils.c). */
++static int websrt_decode_param(URLContext *h, const char *value,
++                               const char *param, char **out)
++{
++    const char *q;
++
++    for (q = value; *q; q++) {
++        if (q[0] == '%' && !(av_isxdigit(q[1]) && av_isxdigit(q[2]))) {
++            av_log(h, AV_LOG_ERROR,
++                   "invalid percent-encoding in %s\n", param);
++            return AVERROR(EINVAL);
++        }
++    }
++    /* Only OOM can fail here: escapes were validated above. */
++    *out = ff_urldecode(value, 1);
++    if (!*out)
++        return AVERROR(ENOMEM);
++    return 0;
++}
++
 +static int websrt_parse_options(URLContext *h, const char *uri,
 +                                char *host, int host_size, int *port,
-+                                char *stream, int stream_size,
 +                                WebSRTContext *s)
 +{
++    const char *cert_mode[3];
 +    const char *p;
 +    char buf[1024];
-+    int cert_params = 0;
++    char hash[2 * 32 + 1];
++    int url_cert_hash = 0, url_cert_hash_file = 0, url_pki = 0;
++    int ncert = 0;
++    int ret;
 +
 +    av_url_split(NULL, 0, NULL, 0, host, host_size, port, NULL, 0, uri);
 +    if (!host[0]) {
@@ -356,55 +440,108 @@ index 00000000..b43c99e8
 +    if (*port < 0)
 +        *port = 443; /* the WebSRT gateway default */
 +
-+    stream[0] = '\0';
-+    s->cert_hash[0] = '\0';
-+    s->latency_ms = 0; /* 0 = library default (120) */
-+
++    /* Merge rule (http.c convention, cf. ff_parse_opts_from_query_string
++     * in udp.c/tcp.c: dict options are applied first, URL parameters
++     * parsed afterwards override them): a parameter found in the URL
++     * query wins, otherwise the AVOption value set through the options
++     * dictionary applies. */
 +    p = strchr(uri, '?');
-+    if (!p) {
++    if (!p && !(s->stream && s->stream[0])) {
 +        av_log(h, AV_LOG_ERROR, "no options: stream name required (%s)\n", uri);
 +        return AVERROR(EINVAL);
 +    }
-+    if (av_find_info_tag(buf, sizeof(buf), "stream", p)) {
-+        av_strlcpy(stream, buf, stream_size);
-+    }
-+    if (av_find_info_tag(buf, sizeof(buf), "cert_hash", p)) {
-+        if (!websrt_is_hex_64(buf)) {
-+            av_log(h, AV_LOG_ERROR, "cert_hash must be 64 hex characters\n");
-+            return AVERROR(EINVAL);
++    if (p) {
++        if (av_find_info_tag(buf, sizeof(buf), "stream", p)) {
++            char *val;
++            ret = websrt_decode_param(h, buf, "stream", &val);
++            if (ret < 0)
++                return ret;
++            av_freep(&s->stream);
++            s->stream = val;
 +        }
-+        av_strlcpy(s->cert_hash, buf, sizeof(s->cert_hash));
-+        cert_params++;
-+    }
-+    if (av_find_info_tag(buf, sizeof(buf), "cert_hash_file", p)) {
-+        int ret;
-+        if (cert_params) {
-+            av_log(h, AV_LOG_ERROR, "cert parameters are mutually exclusive\n");
-+            return AVERROR(EINVAL);
++        if (av_find_info_tag(buf, sizeof(buf), "cert_hash", p)) {
++            char *val;
++            ret = websrt_decode_param(h, buf, "cert_hash", &val);
++            if (ret < 0)
++                return ret;
++            if (!websrt_is_hex_64(val)) {
++                av_log(h, AV_LOG_ERROR, "cert_hash must be 64 hex characters\n");
++                av_free(val);
++                return AVERROR(EINVAL);
++            }
++            av_freep(&s->cert_hash);
++            s->cert_hash = val;
++            url_cert_hash = 1;
 +        }
-+        ret = websrt_read_cert_hash_js(h, buf, s->cert_hash);
-+        if (ret < 0)
-+            return ret;
-+        cert_params++;
-+    }
-+    if (av_find_info_tag(buf, sizeof(buf), "pki", p)) {
-+        if (cert_params) {
-+            av_log(h, AV_LOG_ERROR, "cert_hash, cert_hash_file and pki are mutually exclusive\n");
-+            return AVERROR(EINVAL);
++        if (av_find_info_tag(buf, sizeof(buf), "cert_hash_file", p)) {
++            char *val;
++            ret = websrt_decode_param(h, buf, "cert_hash_file", &val);
++            if (ret < 0)
++                return ret;
++            av_freep(&s->cert_hash_file);
++            s->cert_hash_file = val;
++            url_cert_hash_file = 1;
 +        }
-+        cert_params++;
-+    }
-+    if (av_find_info_tag(buf, sizeof(buf), "latency_ms", p)) {
-+        char *end;
-+        long latency = strtol(buf, &end, 10);
-+        if (*end != '\0' || latency <= 0 || latency > 86400000) {
-+            av_log(h, AV_LOG_ERROR, "latency_ms must be a positive integer <= 86400000\n");
-+            return AVERROR(EINVAL);
++        if (av_find_info_tag(buf, sizeof(buf), "pki", p)) {
++            if (strcmp(buf, "1")) {
++                av_log(h, AV_LOG_ERROR, "pki must be 1\n");
++                return AVERROR(EINVAL);
++            }
++            url_pki = 1;
 +        }
-+        s->latency_ms = (int)latency;
++        if (av_find_info_tag(buf, sizeof(buf), "latency_ms", p)) {
++            char *end;
++            long latency = strtol(buf, &end, 10);
++            if (*end != '\0' || latency <= 0 || latency > 86400000) {
++                av_log(h, AV_LOG_ERROR, "latency_ms must be a positive integer <= 86400000\n");
++                return AVERROR(EINVAL);
++            }
++            s->latency_ms = (int)latency;
++        }
 +    }
 +
-+    if (!stream[0]) {
++    /* cert_hash, cert_hash_file and pki are mutually exclusive across
++     * the URL query and the options dictionary combined (the same
++     * parameter in both sources is fine: the URL value wins). */
++    if (url_cert_hash)
++        cert_mode[ncert++] = "cert_hash (URL)";
++    else if (s->cert_hash)
++        cert_mode[ncert++] = "cert_hash (option)";
++    if (url_cert_hash_file)
++        cert_mode[ncert++] = "cert_hash_file (URL)";
++    else if (s->cert_hash_file)
++        cert_mode[ncert++] = "cert_hash_file (option)";
++    if (url_pki)
++        cert_mode[ncert++] = "pki (URL)";
++    else if (s->pki)
++        cert_mode[ncert++] = "pki (option)";
++    if (ncert > 1) {
++        av_log(h, AV_LOG_ERROR,
++               "%s conflicts with %s: cert_hash, cert_hash_file and "
++               "pki are mutually exclusive\n",
++               cert_mode[0], cert_mode[1]);
++        return AVERROR(EINVAL);
++    }
++
++    if (s->cert_hash && !url_cert_hash &&
++        !websrt_is_hex_64(s->cert_hash)) {
++        av_log(h, AV_LOG_ERROR, "cert_hash must be 64 hex characters\n");
++        return AVERROR(EINVAL);
++    }
++    if (s->cert_hash_file) {
++        /* cert_hash is NULL here: the exclusion above ran first. An
++         * empty result means the file selects PKI. */
++        ret = websrt_read_cert_hash_js(h, s->cert_hash_file, hash);
++        if (ret < 0)
++            return ret;
++        if (hash[0]) {
++            s->cert_hash = av_strdup(hash);
++            if (!s->cert_hash)
++                return AVERROR(ENOMEM);
++        }
++    }
++
++    if (!s->stream || !s->stream[0]) {
 +        av_log(h, AV_LOG_ERROR, "stream name required (?stream=NAME)\n");
 +        return AVERROR(EINVAL);
 +    }
@@ -432,15 +569,14 @@ index 00000000..b43c99e8
 +static int websrt_open(URLContext *h, const char *uri, int flags)
 +{
 +    WebSRTContext *s = h->priv_data;
-+    char host[1024], stream[1024];
++    char host[1024];
 +    int port, ret;
 +    websrt_status_t st;
 +
 +    h->is_streamed = 1;
 +    s->is_output   = (flags & AVIO_FLAG_WRITE) != 0;
 +
-+    ret = websrt_parse_options(h, uri, host, sizeof(host), &port,
-+                               stream, sizeof(stream), s);
++    ret = websrt_parse_options(h, uri, host, sizeof(host), &port, s);
 +    if (ret < 0)
 +        return ret;
 +
@@ -451,39 +587,45 @@ index 00000000..b43c99e8
 +        int attempt;
 +        for (attempt = 0;; attempt++) {
 +            s->pub = websrt_publisher_create();
-+            if (!s->pub)
-+                return AVERROR(ENOMEM);
-+            st = websrt_publisher_start(s->pub, host, port, stream,
-+                                        s->cert_hash[0] ? s->cert_hash : NULL,
++            if (!s->pub) {
++                ret = AVERROR(ENOMEM);
++                goto fail;
++            }
++            st = websrt_publisher_start(s->pub, host, port, s->stream,
++                                        s->cert_hash,
 +                                        s->latency_ms, 0);
 +            if (st == WEBSRT_OK)
 +                break;
 +            if ((st == WEBSRT_ETIMEOUT || st == WEBSRT_ECONNECT) && attempt == 0) {
++                int slept;
 +                av_log(h, AV_LOG_WARNING, "publish start stalled (%s); retrying in 3 s\n",
 +                       websrt_publisher_last_error(s->pub));
 +                websrt_publisher_destroy(s->pub);
 +                s->pub = NULL;
-+                av_usleep(3000000);
++                /* Chunked so an interrupt stays responsive. */
++                for (slept = 0; slept < 3000000; slept += 100000) {
++                    if (ff_check_interrupt(&h->interrupt_callback)) {
++                        ret = AVERROR_EXIT;
++                        goto fail;
++                    }
++                    av_usleep(100000);
++                }
 +                continue;
 +            }
-+            {
-+                const char *why = websrt_publisher_last_error(s->pub);
-+                if (st == WEBSRT_EREJECTED) {
-+                    av_log(h, AV_LOG_ERROR, "stream name in use: '%s' is held by a live source\n", stream);
-+                    ret = AVERROR(EADDRINUSE);
-+                } else if (st == WEBSRT_ETIMEOUT) {
-+                    ret = AVERROR(ETIMEDOUT);
-+                } else {
-+                    ret = AVERROR(EIO);
-+                }
-+                av_log(h, AV_LOG_ERROR, "publish start failed: %s\n", why);
-+                websrt_publisher_destroy(s->pub);
-+                s->pub = NULL;
-+                return ret;
++            if (st == WEBSRT_EREJECTED) {
++                av_log(h, AV_LOG_ERROR, "stream name in use: '%s' is held by a live source\n", s->stream);
++                ret = AVERROR(EADDRINUSE);
++            } else if (st == WEBSRT_ETIMEOUT) {
++                ret = AVERROR(ETIMEDOUT);
++            } else {
++                ret = AVERROR(EIO);
 +            }
++            av_log(h, AV_LOG_ERROR, "publish start failed: %s\n",
++                   websrt_publisher_last_error(s->pub));
++            goto fail;
 +        }
 +        av_log(h, AV_LOG_INFO, "publishing '%s' to %s:%d (%s)\n",
-+               stream, host, port, s->cert_hash[0] ? "cert pinned" : "PKI");
++               s->stream, host, port, s->cert_hash ? "cert pinned" : "PKI");
 +    } else {
 +        /* Input subscribes; retry while the gateway answers 404 so a
 +         * live-edge join during broadcast startup succeeds, and ride
@@ -491,11 +633,17 @@ index 00000000..b43c99e8
 +         * that never appears fails within the retry window. */
 +        int64_t deadline = av_gettime() + WEBSRT_OPEN_RETRY_MS * 1000LL;
 +        for (;;) {
++            if (ff_check_interrupt(&h->interrupt_callback)) {
++                ret = AVERROR_EXIT;
++                goto fail;
++            }
 +            s->sub = websrt_subscriber_create();
-+            if (!s->sub)
-+                return AVERROR(ENOMEM);
-+            st = websrt_subscriber_start(s->sub, host, port, stream,
-+                                         s->cert_hash[0] ? s->cert_hash : NULL,
++            if (!s->sub) {
++                ret = AVERROR(ENOMEM);
++                goto fail;
++            }
++            st = websrt_subscriber_start(s->sub, host, port, s->stream,
++                                         s->cert_hash,
 +                                         s->latency_ms, 0);
 +            if (st == WEBSRT_OK)
 +                break;
@@ -504,30 +652,47 @@ index 00000000..b43c99e8
 +                s->sub = NULL;
 +                if (av_gettime() >= deadline) {
 +                    av_log(h, AV_LOG_ERROR, "stream '%s' not available: %s\n",
-+                           stream, st == WEBSRT_EREJECTED
++                           s->stream, st == WEBSRT_EREJECTED
 +                                      ? "no publisher (HTTP 404)" : "gateway unreachable");
-+                    return AVERROR(ECONNREFUSED);
++                    ret = AVERROR(ECONNREFUSED);
++                    goto fail;
++                }
++                if (ff_check_interrupt(&h->interrupt_callback)) {
++                    ret = AVERROR_EXIT;
++                    goto fail;
 +                }
 +                av_usleep(WEBSRT_OPEN_RETRY_DELAY_US);
 +                continue;
 +            }
 +            av_log(h, AV_LOG_ERROR, "subscribe start failed: %s\n",
 +                   websrt_subscriber_last_error(s->sub));
-+            websrt_subscriber_destroy(s->sub);
-+            s->sub = NULL;
-+            return st == WEBSRT_ETIMEOUT ? AVERROR(ETIMEDOUT) : AVERROR(EIO);
++            ret = st == WEBSRT_ETIMEOUT ? AVERROR(ETIMEDOUT) : AVERROR(EIO);
++            goto fail;
 +        }
 +        av_log(h, AV_LOG_INFO, "subscribed to '%s' at %s:%d (%s)\n",
-+               stream, host, port, s->cert_hash[0] ? "cert pinned" : "PKI");
++               s->stream, host, port, s->cert_hash ? "cert pinned" : "PKI");
 +    }
 +    s->last_stats_us = av_gettime();
 +    return 0;
++
++fail:
++    if (s->pub) {
++        websrt_publisher_destroy(s->pub);
++        s->pub = NULL;
++    }
++    if (s->sub) {
++        websrt_subscriber_destroy(s->sub);
++        s->sub = NULL;
++    }
++    return ret;
 +}
 +
 +static int websrt_read(URLContext *h, uint8_t *buf, int size)
 +{
 +    WebSRTContext *s = h->priv_data;
-+    int64_t stall_deadline = av_gettime() + WEBSRT_READ_STALL_US;
++    int64_t stall_us = h->rw_timeout > 0 ? h->rw_timeout
++                                         : WEBSRT_READ_STALL_US;
++    int64_t stall_deadline = av_gettime() + stall_us;
 +
 +    /* Serve a short read from the bounce buffer first. */
 +    if (s->bounce_off < s->bounce_len) {
@@ -542,8 +707,18 @@ index 00000000..b43c99e8
 +    }
 +
 +    for (;;) {
-+        int n = websrt_subscriber_read(s->sub, s->bounce, sizeof(s->bounce),
-+                                       WEBSRT_IO_TIMEOUT_MS);
++        int n, timeout_ms;
++        int64_t left_us;
++
++        if (ff_check_interrupt(&h->interrupt_callback))
++            return AVERROR_EXIT;
++        /* Bound each poll by the remaining stall budget so a small
++         * rw_timeout is not overshot by the 1 s poll granularity. */
++        left_us    = stall_deadline - av_gettime();
++        timeout_ms = (int)FFMIN(WEBSRT_IO_TIMEOUT_MS, left_us / 1000);
++        timeout_ms = FFMAX(timeout_ms, 1);
++        n = websrt_subscriber_read(s->sub, s->bounce, sizeof(s->bounce),
++                                   timeout_ms);
 +        if (n > 0) {
 +            int m = FFMIN(size, n);
 +            memcpy(buf, s->bounce, m);
@@ -557,7 +732,7 @@ index 00000000..b43c99e8
 +        case WEBSRT_READ_TIMEOUT:
 +            if (av_gettime() >= stall_deadline) {
 +                av_log(h, AV_LOG_ERROR, "no data for %d ms\n",
-+                       (int)(WEBSRT_READ_STALL_US / 1000));
++                       (int)(stall_us / 1000));
 +                return AVERROR(ETIMEDOUT);
 +            }
 +            continue;
@@ -580,10 +755,22 @@ index 00000000..b43c99e8
 +    WebSRTContext *s = h->priv_data;
 +    const uint8_t *data = buf;
 +    int left = size;
-+    int64_t budget_deadline = av_gettime() + WEBSRT_WRITE_BUDGET_US;
++    int64_t budget_us = h->rw_timeout > 0 ? h->rw_timeout
++                                          : WEBSRT_WRITE_BUDGET_US;
++    int64_t budget_deadline = av_gettime() + budget_us;
 +
 +    while (left > 0) {
-+        int n = websrt_publisher_write(s->pub, data, left, WEBSRT_IO_TIMEOUT_MS);
++        int n, timeout_ms;
++        int64_t left_us;
++
++        if (ff_check_interrupt(&h->interrupt_callback))
++            return AVERROR_EXIT;
++        /* Bound each write attempt by the remaining budget so a small
++         * rw_timeout is not overshot by the 1 s granularity. */
++        left_us    = budget_deadline - av_gettime();
++        timeout_ms = (int)FFMIN(WEBSRT_IO_TIMEOUT_MS, left_us / 1000);
++        timeout_ms = FFMAX(timeout_ms, 1);
++        n = websrt_publisher_write(s->pub, data, left, timeout_ms);
 +        if (n > 0) {
 +            /* Partial accept: resume from data + returned. */
 +            data += n;
@@ -596,7 +783,7 @@ index 00000000..b43c99e8
 +        case WEBSRT_WRITE_TIMEOUT:
 +            if (av_gettime() >= budget_deadline) {
 +                av_log(h, AV_LOG_ERROR, "write stalled for %d ms (backpressure)\n",
-+                       (int)(WEBSRT_WRITE_BUDGET_US / 1000));
++                       (int)(budget_us / 1000));
 +                return AVERROR(ETIMEDOUT);
 +            }
 +            continue;
@@ -637,6 +824,9 @@ index 00000000..b43c99e8
 +        websrt_subscriber_destroy(s->sub);
 +        s->sub = NULL;
 +    }
++    av_freep(&s->stream);
++    av_freep(&s->cert_hash);
++    av_freep(&s->cert_hash_file);
 +    return 0;
 +}
 +
@@ -648,6 +838,7 @@ index 00000000..b43c99e8
 +    .url_close           = websrt_close,
 +    .priv_data_size      = sizeof(WebSRTContext),
 +    .flags               = URL_PROTOCOL_FLAG_NETWORK,
++    .priv_data_class     = &websrt_class,
 +};
 -- 
 2.47.3
