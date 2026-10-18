@@ -41,12 +41,13 @@ resolved):
            -c:v libx264 -preset veryfast -c:a aac -f mpegts websrt://gw:443?stream=test
     ffmpeg -f mpegts -i websrt://gw:443?stream=test -c copy out.ts
 
-Locally, run the pair against the supervised gateway (see AGENTS.md
-"Live gateway (supervisord)": read the live config for the actual port
-and cert file — never launch an ad-hoc gateway):
+Locally, run the pair against the supervised `websrt-cpp` gateway
+(ports per its live config, `/etc/websrt-cpp/gateway.conf` — currently
+WT 4435, web 8443; never launch an ad-hoc gateway):
 
-    CERT_JS=<the gateway's runtime cert-hash.js, per its supervised config>
-    URL="websrt://127.0.0.1:4433?stream=test&cert_hash_file=$CERT_JS"
+    CERT_JS=$(mktemp)
+    curl -fsS -k https://127.0.0.1:8443/cert-hash.js >"$CERT_JS"
+    URL="websrt://127.0.0.1:4435?stream=test&cert_hash_file=$CERT_JS"
 
     ./deps/ffmpeg/ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
         -re -f lavfi -i sine=frequency=440 \
