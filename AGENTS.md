@@ -23,33 +23,14 @@ FFmpeg's `websrt://` protocol, talking to any WebSRT gateway.
 
 ## Live gateway (supervisord)
 
-The host's gateway runs under supervisord, together with an always-on test
-publisher (`websrt-cpp`, `websrt-cpp-testpub`). All live testing — golden
-acceptance commands, parity measurements, /health and /stats curls, the
-player page — goes through these services. Never launch ad-hoc
-`websrt-gateway` processes (bare runs, /tmp dev configs): read the live
-configs instead (`supervisorctl status`, then the --config the program entry
-names) to learn ports, binds, and the allowlist — don't guess from the repo.
-
-- Ports (`/etc/websrt-cpp/gateway.conf` remains the source of truth):
-  WebTransport 127.0.0.1:4435, SRT ingest 9102, health/stats
-  http://127.0.0.1:9292, player + cert-hash.js https://127.0.0.1:8443
-  (TLS). The Rust gateway (service `websrt`) owns 4433/9000/9091 —
-  don't confuse the two.
-- Pin the cert with `curl -k https://127.0.0.1:8443/cert-hash.js`
-  (`window.CERT_HASH`, same format `--cert-hash-file` /
-  `?cert_hash_file=` parse). The hash changes on every gateway boot —
-  fetch it fresh each run, never cache it.
-- Logs: `/var/log/websrt-cpp/{gateway,testpub}.{out,err}.log`. The
-  always-on testpub stream is `browsertest` (testsrc2+sine).
-- Apply changes (agents may, sudo works): hot-reloadable config edit →
-  `sudo kill -HUP $(pidof websrt-gateway)`; restart-required edit or a
-  rebuild → `sudo supervisorctl restart websrt-cpp`; test stream →
-  `sudo supervisorctl restart websrt-cpp-testpub` (never run the testpub
-  script directly).
-- ctest suites are the exception: they are fully offline (in-process
-  sessions over in-memory wire pairs — no gateway process at all) and
-  never touch the supervised services.
+All live testing goes through the supervised services — the `websrt-cpp`
+gateway and `websrt-cpp-testpub` publisher (stream `browsertest`) — never
+ad-hoc `websrt-gateway` processes. WT 127.0.0.1:4435 (the Rust gateway
+owns 4433), health http://127.0.0.1:9292, logs `/var/log/websrt-cpp/`,
+config `/etc/websrt-cpp/gateway.conf`. Pin the cert with
+`curl -k https://127.0.0.1:8443/cert-hash.js` (it changes on every boot).
+Restarts: `sudo supervisorctl restart websrt-cpp` (or
+`websrt-cpp-testpub`). ctest is fully offline and never touches these.
 
 ## Dependencies (deps/)
 
