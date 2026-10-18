@@ -31,6 +31,17 @@ player page — goes through these services. Never launch ad-hoc
 configs instead (`supervisorctl status`, then the --config the program entry
 names) to learn ports, binds, and the allowlist — don't guess from the repo.
 
+- Ports (`/etc/websrt-cpp/gateway.conf` remains the source of truth):
+  WebTransport 127.0.0.1:4435, SRT ingest 9102, health/stats
+  http://127.0.0.1:9292, player + cert-hash.js https://127.0.0.1:8443
+  (TLS). The Rust gateway (service `websrt`) owns 4433/9000/9091 —
+  don't confuse the two.
+- Pin the cert with `curl -k https://127.0.0.1:8443/cert-hash.js`
+  (`window.CERT_HASH`, same format `--cert-hash-file` /
+  `?cert_hash_file=` parse). The hash changes on every gateway boot —
+  fetch it fresh each run, never cache it.
+- Logs: `/var/log/websrt-cpp/{gateway,testpub}.{out,err}.log`. The
+  always-on testpub stream is `browsertest` (testsrc2+sine).
 - Apply changes (agents may, sudo works): hot-reloadable config edit →
   `sudo kill -HUP $(pidof websrt-gateway)`; restart-required edit or a
   rebuild → `sudo supervisorctl restart websrt-cpp`; test stream →
