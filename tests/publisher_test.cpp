@@ -91,7 +91,7 @@ void TestConfigValidation()
     }
     {
         auto cfg = GoodConfig();
-        cfg.host = "quicsrt.vyidd.com";
+        cfg.host = "gateway.example.com";
         ExpectValid(cfg, "multi-label DNS-name host");
     }
     {

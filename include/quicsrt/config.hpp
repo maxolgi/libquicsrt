@@ -19,7 +19,7 @@ namespace quicsrt
 struct SubscriberConfig
 {
     // Gateway host: an IPv4 address literal (e.g. "127.0.0.1") or a DNS
-    // name (e.g. "quicsrt.vyidd.com"). Names are resolved at Start() on
+    // name (e.g. "gateway.example.com"). Names are resolved at Start() on
     // the calling thread - blocking, on the OS resolver's default
     // timeout budget - via the srt fork's own resolver; the name as
     // typed (never the resolved IP) is used for TLS SNI and the PKI
