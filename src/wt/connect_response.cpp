@@ -5,7 +5,7 @@
 #include <cstring>
 #include <string_view>
 
-namespace websrt
+namespace quicsrt
 {
 
 std::size_t ConnectResponseParser::Feed(const std::uint8_t* data, std::size_t size)
@@ -80,4 +80,4 @@ const std::string& ConnectResponseParser::status_line() const
     return status_line_;
 }
 
-} // namespace websrt
+} // namespace quicsrt

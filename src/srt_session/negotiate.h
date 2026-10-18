@@ -2,13 +2,13 @@
 // accepted socket, derived after the handshake. Exported via the src/
 // interface so the gateway's ingest side frames to the same size.
 
-#ifndef WEBSRT_SRT_SESSION_NEGOTIATE_H
-#define WEBSRT_SRT_SESSION_NEGOTIATE_H
+#ifndef QUICSRT_SRT_SESSION_NEGOTIATE_H
+#define QUICSRT_SRT_SESSION_NEGOTIATE_H
 
 // The fork's gated API (build with SRT_ENABLE_VIRTUAL_TRANSPORT defined).
 #include "srt.h"
 
-namespace websrt
+namespace quicsrt
 {
 
 // The handshake negotiates min(gateway, listener) payload: the framing
@@ -24,6 +24,6 @@ namespace websrt
 //     (940 = 5 x 188) keeps the framing 188-aligned.
 int NegotiatePayload(SRTSOCKET accepted, int configured);
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_SRT_SESSION_NEGOTIATE_H
+#endif // QUICSRT_SRT_SESSION_NEGOTIATE_H

@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-namespace websrt
+namespace quicsrt
 {
 
 namespace
@@ -150,4 +150,4 @@ std::string SubscriberSession::close_reason() const
     return core_.close_reason();
 }
 
-} // namespace websrt
+} // namespace quicsrt

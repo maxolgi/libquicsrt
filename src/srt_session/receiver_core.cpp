@@ -6,7 +6,7 @@
 
 #include "srt_session/negotiate.h"
 
-namespace websrt
+namespace quicsrt
 {
 
 namespace
@@ -714,4 +714,4 @@ std::string ReceiverCore::close_reason() const
     return close_reason_;
 }
 
-} // namespace websrt
+} // namespace quicsrt

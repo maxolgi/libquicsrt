@@ -4,7 +4,7 @@
 
 #include "proto/constants.h"
 
-namespace websrt
+namespace quicsrt
 {
 
 int NegotiatePayload(SRTSOCKET accepted, int configured)
@@ -28,4 +28,4 @@ int NegotiatePayload(SRTSOCKET accepted, int configured)
     return payload;
 }
 
-} // namespace websrt
+} // namespace quicsrt

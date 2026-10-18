@@ -7,15 +7,15 @@
 // itself is bounded: a gateway that never terminates its header block
 // cannot grow the client's buffer without limit.
 
-#ifndef WEBSRT_WT_CONNECT_RESPONSE_H
-#define WEBSRT_WT_CONNECT_RESPONSE_H
+#ifndef QUICSRT_WT_CONNECT_RESPONSE_H
+#define QUICSRT_WT_CONNECT_RESPONSE_H
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
-namespace websrt
+namespace quicsrt
 {
 
 class ConnectResponseParser
@@ -68,6 +68,6 @@ private:
     int                       status_   = -1;
 };
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_WT_CONNECT_RESPONSE_H
+#endif // QUICSRT_WT_CONNECT_RESPONSE_H

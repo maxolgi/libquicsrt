@@ -3,8 +3,8 @@
 // eventfd (cross-thread Post), registered file descriptors, one-shot and
 // repeating timers, and the advisory tick of an EngineHost.
 
-#ifndef WEBSRT_CORE_EVENT_LOOP_H
-#define WEBSRT_CORE_EVENT_LOOP_H
+#ifndef QUICSRT_CORE_EVENT_LOOP_H
+#define QUICSRT_CORE_EVENT_LOOP_H
 
 #include <atomic>
 #include <chrono>
@@ -15,7 +15,7 @@
 #include <thread>
 #include <vector>
 
-namespace websrt
+namespace quicsrt
 {
 
 // The lsquic-engine seam of the loop, implemented by the party that owns an
@@ -149,6 +149,6 @@ private:
     TimerId                   next_timer_id_ = 1;
 };
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_CORE_EVENT_LOOP_H
+#endif // QUICSRT_CORE_EVENT_LOOP_H

@@ -1,19 +1,19 @@
-#include "websrt/version.hpp"
+#include "quicsrt/version.hpp"
 
-namespace websrt
+namespace quicsrt
 {
 
 namespace
 {
 
 // Defined by CMake from the project version.
-constexpr Version kVersion = {WEBSRT_VERSION_MAJOR, WEBSRT_VERSION_MINOR, WEBSRT_VERSION_PATCH};
+constexpr Version kVersion = {QUICSRT_VERSION_MAJOR, QUICSRT_VERSION_MINOR, QUICSRT_VERSION_PATCH};
 
 } // namespace
 
 const char* version_string()
 {
-    return WEBSRT_VERSION_STRING;
+    return QUICSRT_VERSION_STRING;
 }
 
 Version version()
@@ -21,4 +21,4 @@ Version version()
     return kVersion;
 }
 
-} // namespace websrt
+} // namespace quicsrt

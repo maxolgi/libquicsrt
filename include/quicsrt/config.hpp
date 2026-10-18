@@ -1,32 +1,32 @@
-// Session configuration (libwebsrt public API).
+// Session configuration (libquicsrt public API).
 //
 // SubscriberConfig and PublisherConfig describe one subscribe / publish
 // session: which gateway to talk to, which stream, and the SRT/WT
 // parameters the session negotiates. Fields are plain values; validate()
-// checks every bound before the session starts, the way WebSRT's Rust
+// checks every bound before the session starts, the way QuicSRT's Rust
 // SrtConfig::validate does (descriptive message per violated constraint,
 // first failure wins).
 
-#ifndef WEBSRT_CONFIG_HPP
-#define WEBSRT_CONFIG_HPP
+#ifndef QUICSRT_CONFIG_HPP
+#define QUICSRT_CONFIG_HPP
 
 #include <cstdint>
 #include <string>
 
-namespace websrt
+namespace quicsrt
 {
 
 struct SubscriberConfig
 {
     // Gateway host: an IPv4 address literal (e.g. "127.0.0.1") or a DNS
-    // name (e.g. "websrt.vyidd.com"). Names are resolved at Start() on
+    // name (e.g. "quicsrt.vyidd.com"). Names are resolved at Start() on
     // the calling thread - blocking, on the OS resolver's default
     // timeout budget - via the srt fork's own resolver; the name as
     // typed (never the resolved IP) is used for TLS SNI and the PKI
     // certificate name check. IPv4 results only for now.
     std::string host;
 
-    // Gateway UDP port (WebTransport). Default: the WebSRT gateway port.
+    // Gateway UDP port (WebTransport). Default: the QuicSRT gateway port.
     std::uint16_t port = 443;
 
     // Stream name to view; becomes the /wt?stream=<name> query. May only
@@ -42,13 +42,13 @@ struct SubscriberConfig
 
     // TSBPD (timestamp-based packet delivery) latency in milliseconds.
     // The effective delivery delay is max(sender, receiver) latency, so
-    // this is a floor. Default: 120 (the WebSRT gateway ingest default).
+    // this is a floor. Default: 120 (the QuicSRT gateway ingest default).
     int tsbpd_latency_ms = 120;
 
     // SRT payload size in bytes. Must match the stream's TS framing: the
-    // WebSRT constant is 1128 (6 x 188-byte MPEG-TS packets), and the
+    // QuicSRT constant is 1128 (6 x 188-byte MPEG-TS packets), and the
     // handshake negotiates min(gateway, client), so the default is right
-    // for WebSRT gateways. Default: 1128.
+    // for QuicSRT gateways. Default: 1128.
     int payload_size = 1128;
 
     // Initial RTT estimate in milliseconds seeding SRT's retransmission
@@ -75,7 +75,7 @@ struct PublisherConfig
     // Start() (see SubscriberConfig::host).
     std::string host;
 
-    // Gateway UDP port (WebTransport). Default: the WebSRT gateway port.
+    // Gateway UDP port (WebTransport). Default: the QuicSRT gateway port.
     std::uint16_t port = 443;
 
     // Stream name to publish; becomes the /wt?publish=<name> query. May
@@ -98,7 +98,7 @@ struct PublisherConfig
 
     // SRT payload size in bytes. The handshake negotiates
     // min(gateway, client) and the Write chunker frames to the negotiated
-    // size, so this only caps it. The WebSRT constant is 1128
+    // size, so this only caps it. The QuicSRT constant is 1128
     // (6 x 188-byte MPEG-TS packets). Default: 1128.
     int payload_size = 1128;
 
@@ -119,6 +119,6 @@ struct PublisherConfig
     std::string validate() const;
 };
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_CONFIG_HPP
+#endif // QUICSRT_CONFIG_HPP

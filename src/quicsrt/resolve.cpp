@@ -1,11 +1,11 @@
-#include "websrt/resolve.h"
+#include "quicsrt/resolve.h"
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
 #include "apputil.hpp" // the srt fork's resolver (CreateAddr)
 
-namespace websrt
+namespace quicsrt
 {
 
 std::string ResolveHostToIpv4(const std::string& host, std::string* error)
@@ -28,4 +28,4 @@ std::string ResolveHostToIpv4(const std::string& host, std::string* error)
     return dotted;
 }
 
-} // namespace websrt
+} // namespace quicsrt

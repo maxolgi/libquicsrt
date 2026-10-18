@@ -50,8 +50,8 @@
 #include <thread>
 #include <vector>
 
-#include "websrt/publisher.hpp"
-#include "websrt/subscriber.hpp"
+#include "quicsrt/publisher.hpp"
+#include "quicsrt/subscriber.hpp"
 
 namespace
 {
@@ -153,9 +153,9 @@ int RaceStopAgainstStartFailure(const Config& config)
 
 // ---- (a) hammering rounds + (b) live sentinel, per façade ----
 
-websrt::SubscriberConfig DeadPortSubscriberConfig(int connect_timeout_ms)
+quicsrt::SubscriberConfig DeadPortSubscriberConfig(int connect_timeout_ms)
 {
-    websrt::SubscriberConfig cfg;
+    quicsrt::SubscriberConfig cfg;
     cfg.host               = "127.0.0.1";
     cfg.port               = 1; // nothing listens on UDP 1
     cfg.stream_name        = "facade_race";
@@ -164,9 +164,9 @@ websrt::SubscriberConfig DeadPortSubscriberConfig(int connect_timeout_ms)
     return cfg;
 }
 
-websrt::PublisherConfig DeadPortPublisherConfig(int connect_timeout_ms)
+quicsrt::PublisherConfig DeadPortPublisherConfig(int connect_timeout_ms)
 {
-    websrt::PublisherConfig cfg;
+    quicsrt::PublisherConfig cfg;
     cfg.host               = "127.0.0.1";
     cfg.port               = 1;
     cfg.stream_name        = "facade_race";
@@ -227,12 +227,12 @@ void TestCanaryCleanSessions()
         {
             for (int i = 0; i < kCanaryRounds; ++i)
             {
-                websrt::Subscriber sub;
+                quicsrt::Subscriber sub;
                 const int          status = sub.Start(DeadPortSubscriberConfig(300));
-                Check([&] { return status == websrt::kStartTimedOut || status == websrt::kStartConnectFailed; },
+                Check([&] { return status == quicsrt::kStartTimedOut || status == quicsrt::kStartConnectFailed; },
                       "canary Subscriber Start must still fail typed (got " + std::to_string(status) + ")");
                 char buf[188];
-                Check([&] { return sub.Read(buf, sizeof buf, 100) == websrt::kReadClosed; },
+                Check([&] { return sub.Read(buf, sizeof buf, 100) == quicsrt::kReadClosed; },
                       "canary Subscriber Read must be terminal");
                 sub.Stop();
             }
@@ -242,11 +242,11 @@ void TestCanaryCleanSessions()
         {
             for (int i = 0; i < kCanaryRounds; ++i)
             {
-                websrt::Publisher pub;
+                quicsrt::Publisher pub;
                 const int         status = pub.Start(DeadPortPublisherConfig(300));
-                Check([&] { return status == websrt::kPublishTimedOut || status == websrt::kPublishConnectFailed; },
+                Check([&] { return status == quicsrt::kPublishTimedOut || status == quicsrt::kPublishConnectFailed; },
                       "canary Publisher Start must still fail typed (got " + std::to_string(status) + ")");
-                Check([&] { return pub.Write("x", 1, 100) == websrt::kWriteClosed; },
+                Check([&] { return pub.Write("x", 1, 100) == quicsrt::kWriteClosed; },
                       "canary Publisher Write must be terminal");
                 pub.Stop();
             }
@@ -276,11 +276,11 @@ void TestPublisherWriteStates()
     // (d1) never-started: watchdog Stop hammering around Write must leave
     // the kWriteNotStarted result and its promptness intact.
     {
-        websrt::Publisher pub;
+        quicsrt::Publisher pub;
         std::atomic<bool> halt{false};
         auto              watchdogs = SpawnWatchdogs(&pub, halt);
         const auto        t0        = std::chrono::steady_clock::now();
-        Check([&] { return pub.Write(buf, sizeof buf, kWriteBudgetMs) == websrt::kWriteNotStarted; },
+        Check([&] { return pub.Write(buf, sizeof buf, kWriteBudgetMs) == quicsrt::kWriteNotStarted; },
               "never-started Write must stay kWriteNotStarted under concurrent Stop");
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
         Check([&] { return ms < kWritePromptMs; },
@@ -292,7 +292,7 @@ void TestPublisherWriteStates()
     // the watchdogs hammer its failure-path teardown), then - still under
     // the hammering - Write must be terminal kWriteClosed, prompt.
     {
-        auto              facade = std::make_unique<websrt::Publisher>();
+        auto              facade = std::make_unique<quicsrt::Publisher>();
         std::atomic<bool> halt{false};
         std::atomic<int>  status{-1000};
         std::thread start_thread([&facade, &status] { status.store(facade->Start(DeadPortPublisherConfig(500))); });
@@ -300,10 +300,10 @@ void TestPublisherWriteStates()
         auto watchdogs = SpawnWatchdogs(facade.get(), halt);
         start_thread.join();
         Check([&]
-              { return status.load() == websrt::kPublishTimedOut || status.load() == websrt::kPublishConnectFailed; },
+              { return status.load() == quicsrt::kPublishTimedOut || status.load() == quicsrt::kPublishConnectFailed; },
               "write-state round Start must fail typed (got " + std::to_string(status.load()) + ")");
         const auto t0 = std::chrono::steady_clock::now();
-        Check([&] { return facade->Write(buf, sizeof buf, kWriteBudgetMs) == websrt::kWriteClosed; },
+        Check([&] { return facade->Write(buf, sizeof buf, kWriteBudgetMs) == quicsrt::kWriteClosed; },
               "start-failed Write must be kWriteClosed while Stop hammers");
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
         Check([&] { return ms < kWritePromptMs; },
@@ -316,13 +316,13 @@ void TestPublisherWriteStates()
     // (d3) already-stopped: Stop ran to completion first; a Write with a
     // full budget must still return immediately, terminal.
     {
-        websrt::Publisher pub;
+        quicsrt::Publisher pub;
         const int         status = pub.Start(DeadPortPublisherConfig(300));
-        Check([&] { return status == websrt::kPublishTimedOut || status == websrt::kPublishConnectFailed; },
+        Check([&] { return status == quicsrt::kPublishTimedOut || status == quicsrt::kPublishConnectFailed; },
               "already-stopped round Start must fail typed (got " + std::to_string(status) + ")");
         pub.Stop();
         const auto t0 = std::chrono::steady_clock::now();
-        Check([&] { return pub.Write(buf, sizeof buf, kWriteBudgetMs) == websrt::kWriteClosed; },
+        Check([&] { return pub.Write(buf, sizeof buf, kWriteBudgetMs) == quicsrt::kWriteClosed; },
               "post-Stop Write must be kWriteClosed");
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
         Check([&] { return ms < kWritePromptMs; },
@@ -336,14 +336,14 @@ void TestPublisherWriteStates()
 
 int main()
 {
-    TestFacadeRace<websrt::Subscriber>("subscriber",
-                                       websrt::kStartConnectFailed,
-                                       websrt::kStartTimedOut,
+    TestFacadeRace<quicsrt::Subscriber>("subscriber",
+                                       quicsrt::kStartConnectFailed,
+                                       quicsrt::kStartTimedOut,
                                        DeadPortSubscriberConfig(500),
                                        DeadPortSubscriberConfig(kSentinelTimeoutMs));
-    TestFacadeRace<websrt::Publisher>("publisher",
-                                      websrt::kPublishConnectFailed,
-                                      websrt::kPublishTimedOut,
+    TestFacadeRace<quicsrt::Publisher>("publisher",
+                                      quicsrt::kPublishConnectFailed,
+                                      quicsrt::kPublishTimedOut,
                                       DeadPortPublisherConfig(500),
                                       DeadPortPublisherConfig(kSentinelTimeoutMs));
     TestCanaryCleanSessions();

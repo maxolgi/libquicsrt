@@ -1,9 +1,9 @@
-// websrt-dump: subscribe to a WebSRT stream with libwebsrt and write the
+// quicsrt-dump: subscribe to a QuicSRT stream with libquicsrt and write the
 // received MPEG-TS bytes to a file - the native counterpart of the browser
 // player.
 //
 // Usage:
-//   websrt-dump --host 127.0.0.1 --port 4433 --stream NAME --out FILE
+//   quicsrt-dump --host 127.0.0.1 --port 4433 --stream NAME --out FILE
 //               [--duration SECONDS] [--wait-stream SECONDS]
 //               (--cert-hash HEX | --cert-hash-file PATH | --pki)
 //               [--stats-interval SECONDS] [--quiet]
@@ -34,7 +34,7 @@
 #include <thread>
 #include <vector>
 
-#include "websrt/subscriber.hpp"
+#include "quicsrt/subscriber.hpp"
 
 namespace
 {
@@ -58,7 +58,7 @@ void OnSignal(int /*signum*/)
 void Usage(FILE* out)
 {
     std::fprintf(out,
-                 "Usage: websrt-dump --host HOST --stream NAME --out FILE [options]\n"
+                 "Usage: quicsrt-dump --host HOST --stream NAME --out FILE [options]\n"
                  "\n"
                  "Options:\n"
                  "  --host HOST             gateway IPv4 address (required)\n"
@@ -77,7 +77,7 @@ void Usage(FILE* out)
 
 void FailUsage(const std::string& what)
 {
-    std::fprintf(stderr, "websrt-dump: %s\n", what.c_str());
+    std::fprintf(stderr, "quicsrt-dump: %s\n", what.c_str());
     Usage(stderr);
     std::exit(kExitUsage);
 }
@@ -169,10 +169,10 @@ bool ParseCertHashJs(const std::string& path, std::string* hex_out, bool* pki_ou
 // (bytes include the 44 B/pkt header overhead); wrote_* are the pure TS
 // payload bytes this process wrote to --out.
 void PrintStats(
-    const char* tag, double seconds, long long wrote_bytes, long long wrote_pkts, const websrt::SubscriberStats& s)
+    const char* tag, double seconds, long long wrote_bytes, long long wrote_pkts, const quicsrt::SubscriberStats& s)
 {
     std::fprintf(stderr,
-                 "websrt-dump: %s t=%.1fs wrote_bytes=%lld wrote_pkts=%lld pkts=%lld bytes=%llu"
+                 "quicsrt-dump: %s t=%.1fs wrote_bytes=%lld wrote_pkts=%lld pkts=%lld bytes=%llu"
                  " lost=%lld rtx=%lld dropped=%lld belated=%lld rtt=%.1fms rate=%.2fmbps\n",
                  tag,
                  seconds,
@@ -320,7 +320,7 @@ int main(int argc, char** argv)
     sigaction(SIGINT, &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
 
-    websrt::SubscriberConfig cfg;
+    quicsrt::SubscriberConfig cfg;
     cfg.host            = host;
     cfg.port            = static_cast<std::uint16_t>(port);
     cfg.stream_name     = stream;
@@ -331,44 +331,44 @@ int main(int argc, char** argv)
     // (single-shot instances). kStartTimedOut is retried too - the local
     // gateway's accept loop stalls transiently - but only within the window.
     const auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(wait_stream_s);
-    std::unique_ptr<websrt::Subscriber> sub;
+    std::unique_ptr<quicsrt::Subscriber> sub;
     for (;;)
     {
-        sub                              = std::make_unique<websrt::Subscriber>();
-        const websrt::StartStatus status = sub->Start(cfg);
-        if (status == websrt::kStartOk)
+        sub                              = std::make_unique<quicsrt::Subscriber>();
+        const quicsrt::StartStatus status = sub->Start(cfg);
+        if (status == quicsrt::kStartOk)
         {
             break;
         }
         const std::string error = sub->LastError();
-        if (status == websrt::kStartRejected || status == websrt::kStartTimedOut)
+        if (status == quicsrt::kStartRejected || status == quicsrt::kStartTimedOut)
         {
             if (std::chrono::steady_clock::now() >= wait_deadline)
             {
-                std::fprintf(stderr, "websrt-dump: giving up on stream '%s': %s\n", stream.c_str(), error.c_str());
+                std::fprintf(stderr, "quicsrt-dump: giving up on stream '%s': %s\n", stream.c_str(), error.c_str());
                 return kExitWait;
             }
             if (!quiet)
             {
-                std::fprintf(stderr, "websrt-dump: stream '%s' not available yet, retrying\n", stream.c_str());
+                std::fprintf(stderr, "quicsrt-dump: stream '%s' not available yet, retrying\n", stream.c_str());
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(kRetryDelayMs));
             continue;
         }
-        std::fprintf(stderr, "websrt-dump: Start failed (%d): %s\n", static_cast<int>(status), error.c_str());
+        std::fprintf(stderr, "quicsrt-dump: Start failed (%d): %s\n", static_cast<int>(status), error.c_str());
         return kExitStream;
     }
 
     FILE* out = std::fopen(out_path.c_str(), "wb");
     if (out == nullptr)
     {
-        std::fprintf(stderr, "websrt-dump: cannot open '%s' for writing\n", out_path.c_str());
+        std::fprintf(stderr, "quicsrt-dump: cannot open '%s' for writing\n", out_path.c_str());
         return kExitStream;
     }
     if (!quiet)
     {
         std::fprintf(stderr,
-                     "websrt-dump: subscribed to '%s' at %s:%d (%s)\n",
+                     "quicsrt-dump: subscribed to '%s' at %s:%d (%s)\n",
                      stream.c_str(),
                      host.c_str(),
                      port,
@@ -379,7 +379,7 @@ int main(int argc, char** argv)
     auto                    last_stats  = started;
     long long               wrote_bytes = 0;
     long long               wrote_pkts  = 0;
-    websrt::SubscriberStats last{};
+    quicsrt::SubscriberStats last{};
     const char*             reason    = "eof";
     int                     exit_code = kExitOk;
     std::string             error;
@@ -395,8 +395,8 @@ int main(int argc, char** argv)
         {
             return;
         }
-        websrt::SubscriberStats s;
-        if (sub->Stats(&s) == websrt::kStatsOk)
+        quicsrt::SubscriberStats s;
+        if (sub->Stats(&s) == quicsrt::kStatsOk)
         {
             last = s;
         }
@@ -432,12 +432,12 @@ int main(int argc, char** argv)
             maybe_stats();
             continue;
         }
-        if (n == websrt::kReadTimeout)
+        if (n == quicsrt::kReadTimeout)
         {
             maybe_stats();
             continue;
         }
-        if (n == websrt::kReadEnd)
+        if (n == quicsrt::kReadEnd)
         {
             break;
         }
@@ -450,8 +450,8 @@ int main(int argc, char** argv)
     // Final snapshot: the totals are unreadable once the connection ended,
     // so keep the last live one when Stats declines.
     {
-        websrt::SubscriberStats s;
-        if (sub->Stats(&s) == websrt::kStatsOk)
+        quicsrt::SubscriberStats s;
+        if (sub->Stats(&s) == quicsrt::kStatsOk)
         {
             last = s;
         }
@@ -468,10 +468,10 @@ int main(int argc, char** argv)
     const double total_s = SecondsSince(started);
     PrintStats("done", total_s, wrote_bytes, wrote_pkts, last);
     std::fprintf(
-        stderr, "websrt-dump: %s after %.1fs, %lld bytes in %lld messages\n", reason, total_s, wrote_bytes, wrote_pkts);
+        stderr, "quicsrt-dump: %s after %.1fs, %lld bytes in %lld messages\n", reason, total_s, wrote_bytes, wrote_pkts);
     if (!error.empty())
     {
-        std::fprintf(stderr, "websrt-dump: error: %s\n", error.c_str());
+        std::fprintf(stderr, "quicsrt-dump: error: %s\n", error.c_str());
     }
     return exit_code;
 }

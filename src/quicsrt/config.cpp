@@ -1,12 +1,12 @@
-// SubscriberConfig / PublisherConfig validate (libwebsrt public API):
+// SubscriberConfig / PublisherConfig validate (libquicsrt public API):
 // every field's bounds, descriptive message on the first violation -
-// the same discipline as WebSRT's Rust SrtConfig::validate.
+// the same discipline as QuicSRT's Rust SrtConfig::validate.
 
-#include "websrt/config.hpp"
+#include "quicsrt/config.hpp"
 
 #include <string>
 
-namespace websrt
+namespace quicsrt
 {
 
 namespace
@@ -131,4 +131,4 @@ std::string PublisherConfig::validate() const
         host, port, stream_name, cert_sha256_hex, tsbpd_latency_ms, payload_size, initial_rtt_ms, connect_timeout_ms);
 }
 
-} // namespace websrt
+} // namespace quicsrt

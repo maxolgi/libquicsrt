@@ -1,4 +1,4 @@
-// publisher_test: the libwebsrt Publisher surface.
+// publisher_test: the libquicsrt Publisher surface.
 //
 // (1) PublisherConfig::validate() matrix - the shared bounds.
 // (2) TsChunker units: 188 alignment, exact 1128 boundaries, sub-188
@@ -19,8 +19,8 @@
 #include <vector>
 
 #include "srt_session/publisher.h"
-#include "websrt/publisher.hpp"
-#include "websrt/start_status.h"
+#include "quicsrt/publisher.hpp"
+#include "quicsrt/start_status.h"
 
 namespace
 {
@@ -53,9 +53,9 @@ bool Contains(const std::string& haystack, const char* needle)
 
 // ---- (1) config validation matrix ----
 
-websrt::PublisherConfig GoodConfig()
+quicsrt::PublisherConfig GoodConfig()
 {
-    websrt::PublisherConfig cfg;
+    quicsrt::PublisherConfig cfg;
     cfg.host            = "127.0.0.1";
     cfg.port            = 4433;
     cfg.stream_name     = "publisher_test";
@@ -63,12 +63,12 @@ websrt::PublisherConfig GoodConfig()
     return cfg;
 }
 
-void ExpectValid(const websrt::PublisherConfig& cfg, const std::string& what)
+void ExpectValid(const quicsrt::PublisherConfig& cfg, const std::string& what)
 {
     Check([&] { return cfg.validate().empty(); }, what + " must validate");
 }
 
-void ExpectInvalid(const websrt::PublisherConfig& cfg, const char* fragment, const std::string& what)
+void ExpectInvalid(const quicsrt::PublisherConfig& cfg, const char* fragment, const std::string& what)
 {
     const std::string error = cfg.validate();
     Check([&] { return !error.empty() && Contains(error, fragment); },
@@ -91,7 +91,7 @@ void TestConfigValidation()
     }
     {
         auto cfg = GoodConfig();
-        cfg.host = "websrt.vyidd.com";
+        cfg.host = "quicsrt.vyidd.com";
         ExpectValid(cfg, "multi-label DNS-name host");
     }
     {
@@ -106,7 +106,7 @@ void TestConfigValidation()
     }
     {
         auto cfg = GoodConfig();
-        cfg.host = "websrt://gw";
+        cfg.host = "quicsrt://gw";
         ExpectInvalid(cfg, "host", "scheme in host");
     }
     {
@@ -192,7 +192,7 @@ std::vector<std::uint8_t> Bytes(int n, std::uint8_t seed)
 
 void TestChunker()
 {
-    using websrt::TsChunker;
+    using quicsrt::TsChunker;
     constexpr int kTs = 188;
 
     {
@@ -308,12 +308,12 @@ void TestChunker()
 
 // ---- (2b) Start HTTP-status mapping units ----
 
-// The façades' kXRejected / kXConnectFailed seam (websrt/start_status.h):
+// The façades' kXRejected / kXConnectFailed seam (quicsrt/start_status.h):
 // 403/404/429 are the typed gateway refusals, 5xx and the unparseable -1
 // are transport failures - a pure mapping, asserted offline.
 void TestHttpStatusMapping()
 {
-    using websrt::HttpStatusIsRejected;
+    using quicsrt::HttpStatusIsRejected;
     Check([&] { return HttpStatusIsRejected(403) && HttpStatusIsRejected(404) && HttpStatusIsRejected(429); },
           "403/404/429 are the typed gateway refusals");
     Check([&] { return !HttpStatusIsRejected(500) && !HttpStatusIsRejected(502) && !HttpStatusIsRejected(503); },
@@ -330,12 +330,12 @@ void TestHttpStatusMapping()
 void TestOfflineMisuse()
 {
     {
-        websrt::Publisher pub;
+        quicsrt::Publisher pub;
         char              buf[1128];
-        Check([&] { return pub.Write(buf, sizeof buf, 0) == websrt::kWriteNotStarted; },
+        Check([&] { return pub.Write(buf, sizeof buf, 0) == quicsrt::kWriteNotStarted; },
               "Write before Start must be kWriteNotStarted");
-        websrt::PublisherStats stats;
-        Check([&] { return pub.Stats(&stats) == websrt::kStatsNotConnected; }, "Stats before Start");
+        quicsrt::PublisherStats stats;
+        Check([&] { return pub.Stats(&stats) == quicsrt::kStatsNotConnected; }, "Stats before Start");
         Check([&] { return !pub.End(100); }, "End before Start fails");
         Check([&] { return pub.LastError().empty(); }, "no error recorded yet");
     }
@@ -343,11 +343,11 @@ void TestOfflineMisuse()
         auto        cfg = GoodConfig();
         const auto* bad = &cfg;
         cfg.stream_name = "has space";
-        websrt::Publisher pub;
-        Check([&] { return pub.Start(*bad) == websrt::kPublishInvalidConfig; }, "Start with invalid config");
+        quicsrt::Publisher pub;
+        Check([&] { return pub.Start(*bad) == quicsrt::kPublishInvalidConfig; }, "Start with invalid config");
         Check([&] { return !pub.LastError().empty(); }, "invalid config records LastError");
         char buf[1128];
-        Check([&] { return pub.Write(buf, sizeof buf, 0) == websrt::kWriteNotStarted; },
+        Check([&] { return pub.Write(buf, sizeof buf, 0) == quicsrt::kWriteNotStarted; },
               "Write after invalid-config Start");
         // The instance was not consumed by a failed validation: a
         // corrected config may still be started (fails at the transport
@@ -357,32 +357,32 @@ void TestOfflineMisuse()
         cfg.port               = 1; // nothing listens there
         cfg.connect_timeout_ms = 500;
         const auto status      = pub.Start(cfg);
-        Check([&] { return status == websrt::kPublishTimedOut || status == websrt::kPublishConnectFailed; },
+        Check([&] { return status == quicsrt::kPublishTimedOut || status == quicsrt::kPublishConnectFailed; },
               "corrected-config Start must reach the transport, not kPublishAlreadyStarted");
-        Check([&] { return pub.Start(cfg) == websrt::kPublishAlreadyStarted; }, "second Start is single-shot");
-        Check([&] { return pub.Write(buf, sizeof buf, 0) == websrt::kWriteClosed; },
+        Check([&] { return pub.Start(cfg) == quicsrt::kPublishAlreadyStarted; }, "second Start is single-shot");
+        Check([&] { return pub.Write(buf, sizeof buf, 0) == quicsrt::kWriteClosed; },
               "Write after failed Start is kWriteClosed");
         pub.Stop();
-        Check([&] { return pub.Write(buf, sizeof buf, 0) == websrt::kWriteClosed; }, "Write stays terminal after Stop");
+        Check([&] { return pub.Write(buf, sizeof buf, 0) == quicsrt::kWriteClosed; }, "Write stays terminal after Stop");
     }
     {
         // Unresolvable DNS name: typed, bounded Start failure (same
         // discipline as the Subscriber façade's case).
         auto cfg               = GoodConfig();
-        cfg.host               = "no-such-host.websrt-cpp.invalid";
+        cfg.host               = "no-such-host.quicsrt-cpp.invalid";
         cfg.connect_timeout_ms = 500;
         const auto        t0   = std::chrono::steady_clock::now();
-        websrt::Publisher pub;
+        quicsrt::Publisher pub;
         const auto        status = pub.Start(cfg);
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
-        Check([&] { return status == websrt::kPublishInvalidTarget; },
+        Check([&] { return status == quicsrt::kPublishInvalidTarget; },
               "unresolvable host must kPublishInvalidTarget (got " + std::to_string(status) + ")");
         Check([&] { return Contains(pub.LastError(), "resolve"); },
               "unresolvable host must name the resolution failure (got \"" + pub.LastError() + "\")");
         Check([&] { return ms.count() < 20000; },
               "unresolvable host must fail bounded (took " + std::to_string(ms.count()) + " ms)");
         char buf[1128];
-        Check([&] { return pub.Write(buf, sizeof buf, 0) == websrt::kWriteClosed; },
+        Check([&] { return pub.Write(buf, sizeof buf, 0) == quicsrt::kWriteClosed; },
               "Write after resolve failure is kWriteClosed");
         pub.Stop();
     }

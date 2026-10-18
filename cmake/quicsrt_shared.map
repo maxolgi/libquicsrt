@@ -1,13 +1,13 @@
-# Export contract of the shared flavor (WEBSRT_BUILD_SHARED=ON): the
-# extern-C ABI of include/websrt/websrt_c.h only. Everything else - the
+# Export contract of the shared flavor (QUICSRT_BUILD_SHARED=ON): the
+# extern-C ABI of include/quicsrt/quicsrt_c.h only. Everything else - the
 # C++ API, the srt fork, lsquic, BoringSSL - is localized so the DSO
 # shares no symbols with any other library in the process. That is what
 # lets one FFmpeg binary link this library AND a system libsrt
 # (--enable-libsrt) without interposition; see README "Coexisting with
 # system srt".
-WEBSRT_C_ABI {
+QUICSRT_C_ABI {
     global:
-        websrt_*;
+        quicsrt_*;
     local:
         *;
 };

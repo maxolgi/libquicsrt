@@ -4,13 +4,13 @@
 // source (first-wins), 404 = no such stream, 429 = session/viewer caps.
 // Every other status - 5xx, redirects, and the unparseable -1 - is a
 // transport-level failure, not a refusal: callers keying off the typed
-// status (kXRejected / WEBSRT_EREJECTED) must be able to tell a wrong
+// status (kXRejected / QUICSRT_EREJECTED) must be able to tell a wrong
 // stream name from a gateway on fire.
 
-#ifndef WEBSRT_START_STATUS_H
-#define WEBSRT_START_STATUS_H
+#ifndef QUICSRT_START_STATUS_H
+#define QUICSRT_START_STATUS_H
 
-namespace websrt
+namespace quicsrt
 {
 
 constexpr bool HttpStatusIsRejected(int status)
@@ -18,6 +18,6 @@ constexpr bool HttpStatusIsRejected(int status)
     return status == 403 || status == 404 || status == 429;
 }
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_START_STATUS_H
+#endif // QUICSRT_START_STATUS_H

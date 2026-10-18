@@ -1,6 +1,6 @@
 // WT-free SRT receiver core: the pure-SRT receiver machinery extracted
 // from SubscriberSession - the native analogue of the browser-side
-// srt-wasm SrtReceiver (WebSRT crates/srt-wasm/src/lib.rs). The peer is
+// srt-wasm SrtReceiver (QuicSRT crates/srt-wasm/src/lib.rs). The peer is
 // the SRT initiator (caller); this core is the listener: on Start it
 // creates one forked-srt socket in virtual-transport mode, binds it to
 // a label address, puts it into the listening state,
@@ -83,8 +83,8 @@
 //     adapter's WTClient outlives the session and serializes on
 //     OnSessionClosed).
 
-#ifndef WEBSRT_SRT_SESSION_RECEIVER_CORE_H
-#define WEBSRT_SRT_SESSION_RECEIVER_CORE_H
+#ifndef QUICSRT_SRT_SESSION_RECEIVER_CORE_H
+#define QUICSRT_SRT_SESSION_RECEIVER_CORE_H
 
 #include <arpa/inet.h>
 
@@ -101,7 +101,7 @@
 // The fork's gated API (build with SRT_ENABLE_VIRTUAL_TRANSPORT defined).
 #include "srt.h"
 
-namespace websrt
+namespace quicsrt
 {
 
 struct ReceiverCoreParams
@@ -124,7 +124,7 @@ class ReceiverCore
 public:
     // Read outcomes; positive values carry the delivered byte count, so
     // Read() returns plain int and these are its documented constants.
-    // They mirror the public Subscriber's values (include/websrt/subscriber.hpp).
+    // They mirror the public Subscriber's values (include/quicsrt/subscriber.hpp).
     enum ReadResult
     {
         kReadEnd        = 0,  // stream ended (graceful); sticky afterwards
@@ -279,6 +279,6 @@ private:
     std::atomic<bool> closed_{false};
 };
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_SRT_SESSION_RECEIVER_CORE_H
+#endif // QUICSRT_SRT_SESSION_RECEIVER_CORE_H

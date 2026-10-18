@@ -4,6 +4,6 @@
 # srt_startup() calls data-race on the flag. Worst case is the atfork
 # handler being registered twice; the actual refcounted global init
 # (CUDTUnited::startup) is properly locked. Genuine fork bug - to be fixed
-# in the srt fork repo (maxolgi/srt, branch websrt), then this entry gets
+# in the srt fork repo (maxolgi/srt, branch quicsrt), then this entry gets
 # deleted.
 race:srt::CUDT::startup

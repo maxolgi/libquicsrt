@@ -1,6 +1,6 @@
-// Subscriber façade (libwebsrt public API): owns the EventLoop, one
+// Subscriber façade (libquicsrt public API): owns the EventLoop, one
 // WTClient, and the SubscriberSession, and exposes the blocking,
-// exception-free surface declared in include/websrt/subscriber.hpp.
+// exception-free surface declared in include/quicsrt/subscriber.hpp.
 //
 // Member construction is two-phase because the WTClient wants the session
 // (its listener) by reference and the session wants the client (its
@@ -18,7 +18,7 @@
 // destructor, and a concurrent watchdog Stop cannot double-drop the srt
 // library reference.
 
-#include "websrt/subscriber.hpp"
+#include "quicsrt/subscriber.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -31,11 +31,11 @@
 #include "core/event_loop.h"
 #include "srt.h"
 #include "srt_session/subscriber.h"
-#include "websrt/resolve.h"
-#include "websrt/start_status.h"
+#include "quicsrt/resolve.h"
+#include "quicsrt/start_status.h"
 #include "wt/client.h"
 
-namespace websrt
+namespace quicsrt
 {
 
 namespace
@@ -360,4 +360,4 @@ std::string Subscriber::LastError() const
     return impl_->LastError();
 }
 
-} // namespace websrt
+} // namespace quicsrt

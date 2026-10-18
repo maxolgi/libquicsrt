@@ -1,4 +1,4 @@
-// Subscriber: the libwebsrt client for viewing a WebSRT stream
+// Subscriber: the libquicsrt client for viewing a QuicSRT stream
 // (SRT over WebTransport), the native counterpart of the browser player.
 //
 // One Subscriber instance performs exactly one session. Start() blocks
@@ -15,10 +15,10 @@
 //
 // Usage sketch:
 //
-//     websrt::SubscriberConfig cfg;
+//     quicsrt::SubscriberConfig cfg;
 //     cfg.host = "127.0.0.1"; cfg.port = 4433; cfg.stream_name = "demo";
 //     cfg.cert_sha256_hex = "<64 hex chars from cert-hash.js>";
-//     if (sub.Start(cfg) != websrt::kStartOk) { /* sub.LastError() */ }
+//     if (sub.Start(cfg) != quicsrt::kStartOk) { /* sub.LastError() */ }
 //     char buf[1128];
 //     for (;;) {
 //         int n = sub.Read(buf, sizeof buf, 1000);
@@ -26,17 +26,17 @@
 //         fwrite(buf, 1, n, out);
 //     }
 
-#ifndef WEBSRT_SUBSCRIBER_HPP
-#define WEBSRT_SUBSCRIBER_HPP
+#ifndef QUICSRT_SUBSCRIBER_HPP
+#define QUICSRT_SUBSCRIBER_HPP
 
 #include <cstddef>
 #include <memory>
 #include <string>
 
-#include "websrt/config.hpp"
-#include "websrt/stats.hpp"
+#include "quicsrt/config.hpp"
+#include "quicsrt/stats.hpp"
 
-namespace websrt
+namespace quicsrt
 {
 
 // Outcome of Subscriber::Start().
@@ -52,7 +52,7 @@ enum StartStatus
     kStartInternal,       // unexpected library-internal failure
 };
 
-// Outcome of Subscriber::Stats() lives in websrt/stats.hpp (shared with
+// Outcome of Subscriber::Stats() lives in quicsrt/stats.hpp (shared with
 // the Publisher).
 
 // Return values of Subscriber::Read(). Positive values are the number of
@@ -116,6 +116,6 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_SUBSCRIBER_HPP
+#endif // QUICSRT_SUBSCRIBER_HPP

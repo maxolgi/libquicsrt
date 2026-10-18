@@ -1,37 +1,37 @@
-// websrt_c implementation: a pure, exception-free wrapper over the C++
+// quicsrt_c implementation: a pure, exception-free wrapper over the C++
 // façades. Handles own their object; status codes map one-to-one from
 // the C++ enums; stats format to one key=value line (the same fields
-// websrt-dump prints). The event loop and threading contracts are the
+// quicsrt-dump prints). The event loop and threading contracts are the
 // façades' - this layer adds none of its own.
 
-#include "websrt/websrt_c.h"
+#include "quicsrt/quicsrt_c.h"
 
 #include <cstdint>
 #include <cstdio>
 #include <new>
 #include <string>
 
-#include "websrt/publisher.hpp"
-#include "websrt/subscriber.hpp"
-#include "websrt/version.hpp"
+#include "quicsrt/publisher.hpp"
+#include "quicsrt/subscriber.hpp"
+#include "quicsrt/version.hpp"
 
 // Handles are wrappers around the C++ objects. last_error is kept in a
 // std::string the caller reads through a const char* that stays valid
 // until the next call on the handle (the façades return by value).
-struct websrt_publisher
+struct quicsrt_publisher
 {
-    std::unique_ptr<websrt::Publisher> obj;
+    std::unique_ptr<quicsrt::Publisher> obj;
     std::string                        error;
 
-    explicit websrt_publisher(std::unique_ptr<websrt::Publisher> o) : obj(std::move(o)) {}
+    explicit quicsrt_publisher(std::unique_ptr<quicsrt::Publisher> o) : obj(std::move(o)) {}
 };
 
-struct websrt_subscriber
+struct quicsrt_subscriber
 {
-    std::unique_ptr<websrt::Subscriber> obj;
+    std::unique_ptr<quicsrt::Subscriber> obj;
     std::string                         error;
 
-    explicit websrt_subscriber(std::unique_ptr<websrt::Subscriber> o) : obj(std::move(o)) {}
+    explicit quicsrt_subscriber(std::unique_ptr<quicsrt::Subscriber> o) : obj(std::move(o)) {}
 };
 
 namespace
@@ -45,42 +45,42 @@ constexpr int           kDefaultConnectMs     = 10000;
 // MapStart's case labels are the façade enums' integer VALUES, not their
 // names: a reorder of either enum would silently mistranslate. Pin every
 // value the mapping assumes (both façade enums share the 0..7 ordering).
-static_assert(websrt::kPublishOk == 0 && websrt::kStartOk == 0, "MapStart case 0 -> WEBSRT_OK");
-static_assert(websrt::kPublishInvalidConfig == 1 && websrt::kStartInvalidConfig == 1,
-              "MapStart case 1 -> WEBSRT_ECONFIG");
-static_assert(websrt::kPublishAlreadyStarted == 2 && websrt::kStartAlreadyStarted == 2,
-              "MapStart case 2 -> WEBSRT_ESTATE");
-static_assert(websrt::kPublishInvalidTarget == 3 && websrt::kStartInvalidTarget == 3,
-              "MapStart case 3 -> WEBSRT_ETARGET");
-static_assert(websrt::kPublishRejected == 4 && websrt::kStartRejected == 4, "MapStart case 4 -> WEBSRT_EREJECTED");
-static_assert(websrt::kPublishConnectFailed == 5 && websrt::kStartConnectFailed == 5,
-              "MapStart case 5 -> WEBSRT_ECONNECT");
-static_assert(websrt::kPublishTimedOut == 6 && websrt::kStartTimedOut == 6, "MapStart case 6 -> WEBSRT_ETIMEOUT");
-static_assert(websrt::kPublishInternal == 7 && websrt::kStartInternal == 7,
-              "MapStart default -> WEBSRT_EINTERNAL (kXInternal is 7)");
+static_assert(quicsrt::kPublishOk == 0 && quicsrt::kStartOk == 0, "MapStart case 0 -> QUICSRT_OK");
+static_assert(quicsrt::kPublishInvalidConfig == 1 && quicsrt::kStartInvalidConfig == 1,
+              "MapStart case 1 -> QUICSRT_ECONFIG");
+static_assert(quicsrt::kPublishAlreadyStarted == 2 && quicsrt::kStartAlreadyStarted == 2,
+              "MapStart case 2 -> QUICSRT_ESTATE");
+static_assert(quicsrt::kPublishInvalidTarget == 3 && quicsrt::kStartInvalidTarget == 3,
+              "MapStart case 3 -> QUICSRT_ETARGET");
+static_assert(quicsrt::kPublishRejected == 4 && quicsrt::kStartRejected == 4, "MapStart case 4 -> QUICSRT_EREJECTED");
+static_assert(quicsrt::kPublishConnectFailed == 5 && quicsrt::kStartConnectFailed == 5,
+              "MapStart case 5 -> QUICSRT_ECONNECT");
+static_assert(quicsrt::kPublishTimedOut == 6 && quicsrt::kStartTimedOut == 6, "MapStart case 6 -> QUICSRT_ETIMEOUT");
+static_assert(quicsrt::kPublishInternal == 7 && quicsrt::kStartInternal == 7,
+              "MapStart default -> QUICSRT_EINTERNAL (kXInternal is 7)");
 
-websrt_status_t MapStart(int status)
+quicsrt_status_t MapStart(int status)
 {
     switch (status)
     {
-    case 0:  return WEBSRT_OK;        // kPublishOk / kStartOk
-    case 1:  return WEBSRT_ECONFIG;   // kXInvalidConfig
-    case 2:  return WEBSRT_ESTATE;    // kXAlreadyStarted
-    case 3:  return WEBSRT_ETARGET;   // kXInvalidTarget
-    case 4:  return WEBSRT_EREJECTED; // kXRejected
-    case 5:  return WEBSRT_ECONNECT;  // kXConnectFailed
-    case 6:  return WEBSRT_ETIMEOUT;  // kXTimedOut
-    default: return WEBSRT_EINTERNAL; // kXInternal
+    case 0:  return QUICSRT_OK;        // kPublishOk / kStartOk
+    case 1:  return QUICSRT_ECONFIG;   // kXInvalidConfig
+    case 2:  return QUICSRT_ESTATE;    // kXAlreadyStarted
+    case 3:  return QUICSRT_ETARGET;   // kXInvalidTarget
+    case 4:  return QUICSRT_EREJECTED; // kXRejected
+    case 5:  return QUICSRT_ECONNECT;  // kXConnectFailed
+    case 6:  return QUICSRT_ETIMEOUT;  // kXTimedOut
+    default: return QUICSRT_EINTERNAL; // kXInternal
     }
 }
 
-websrt_status_t FormatPublisherStats(websrt_publisher_t* handle, char* buf, std::size_t buflen)
+quicsrt_status_t FormatPublisherStats(quicsrt_publisher_t* handle, char* buf, std::size_t buflen)
 {
-    websrt::PublisherStats s;
-    if (handle->obj->Stats(&s) != websrt::kStatsOk)
+    quicsrt::PublisherStats s;
+    if (handle->obj->Stats(&s) != quicsrt::kStatsOk)
     {
         buf[0] = '\0';
-        return WEBSRT_ESTATE;
+        return QUICSRT_ESTATE;
     }
     std::snprintf(buf,
                   buflen,
@@ -99,16 +99,16 @@ websrt_status_t FormatPublisherStats(websrt_publisher_t* handle, char* buf, std:
                   s.flight_size,
                   s.packets_buffered,
                   s.ms_tsbpd_delay);
-    return WEBSRT_OK;
+    return QUICSRT_OK;
 }
 
-websrt_status_t FormatSubscriberStats(websrt_subscriber_t* handle, char* buf, std::size_t buflen)
+quicsrt_status_t FormatSubscriberStats(quicsrt_subscriber_t* handle, char* buf, std::size_t buflen)
 {
-    websrt::SubscriberStats s;
-    if (handle->obj->Stats(&s) != websrt::kStatsOk)
+    quicsrt::SubscriberStats s;
+    if (handle->obj->Stats(&s) != quicsrt::kStatsOk)
     {
         buf[0] = '\0';
-        return WEBSRT_ESTATE;
+        return QUICSRT_ESTATE;
     }
     std::snprintf(buf,
                   buflen,
@@ -128,21 +128,21 @@ websrt_status_t FormatSubscriberStats(websrt_subscriber_t* handle, char* buf, st
                   s.packets_buffered,
                   s.ms_buffered,
                   s.ms_tsbpd_delay);
-    return WEBSRT_OK;
+    return QUICSRT_OK;
 }
 
 } // namespace
 
-const char* websrt_version(void)
+const char* quicsrt_version(void)
 {
-    return websrt::version_string();
+    return quicsrt::version_string();
 }
 
-websrt_publisher_t* websrt_publisher_create(void)
+quicsrt_publisher_t* quicsrt_publisher_create(void)
 {
     try
     {
-        return new websrt_publisher_t(std::make_unique<websrt::Publisher>());
+        return new quicsrt_publisher_t(std::make_unique<quicsrt::Publisher>());
     }
     catch (...)
     {
@@ -150,27 +150,27 @@ websrt_publisher_t* websrt_publisher_create(void)
     }
 }
 
-void websrt_publisher_destroy(websrt_publisher_t* pub)
+void quicsrt_publisher_destroy(quicsrt_publisher_t* pub)
 {
     delete pub; // ~Publisher stops a live session
 }
 
-websrt_status_t websrt_publisher_start(
-    websrt_publisher_t* pub, const char* host, int port, const char* stream,
+quicsrt_status_t quicsrt_publisher_start(
+    quicsrt_publisher_t* pub, const char* host, int port, const char* stream,
     const char* cert_hash_hex, int latency_ms, int timeout_ms)
 {
     if (pub == nullptr || pub->obj == nullptr)
     {
-        return WEBSRT_EINVAL;
+        return QUICSRT_EINVAL;
     }
     if (host == nullptr || stream == nullptr)
     {
         pub->error = "host and stream must be non-NULL";
-        return WEBSRT_EINVAL;
+        return QUICSRT_EINVAL;
     }
     try
     {
-        websrt::PublisherConfig cfg;
+        quicsrt::PublisherConfig cfg;
         cfg.host            = host;
         cfg.port            = port > 0 && port <= 65535 ? static_cast<std::uint16_t>(port) : kDefaultPort;
         cfg.stream_name     = stream;
@@ -184,40 +184,40 @@ websrt_status_t websrt_publisher_start(
     catch (const std::bad_alloc&)
     {
         pub->error = "out of memory";
-        return WEBSRT_ENOMEM;
+        return QUICSRT_ENOMEM;
     }
     catch (...)
     {
         pub->error = "unknown failure";
-        return WEBSRT_EINTERNAL;
+        return QUICSRT_EINTERNAL;
     }
 }
 
-int websrt_publisher_write(websrt_publisher_t* pub, const void* data, size_t len, int timeout_ms)
+int quicsrt_publisher_write(quicsrt_publisher_t* pub, const void* data, size_t len, int timeout_ms)
 {
     if (pub == nullptr || pub->obj == nullptr)
     {
-        return WEBSRT_WRITE_INVALID;
+        return QUICSRT_WRITE_INVALID;
     }
     return pub->obj->Write(data, len, timeout_ms);
 }
 
-websrt_status_t websrt_publisher_end(websrt_publisher_t* pub, int timeout_ms)
+quicsrt_status_t quicsrt_publisher_end(quicsrt_publisher_t* pub, int timeout_ms)
 {
     if (pub == nullptr || pub->obj == nullptr)
     {
-        return WEBSRT_EINVAL;
+        return QUICSRT_EINVAL;
     }
     if (!pub->obj->End(timeout_ms))
     {
         pub->error = pub->obj->LastError();
-        return pub->error.empty() ? WEBSRT_ETIMEOUT : WEBSRT_EINTERNAL;
+        return pub->error.empty() ? QUICSRT_ETIMEOUT : QUICSRT_EINTERNAL;
     }
     pub->error.clear();
-    return WEBSRT_OK;
+    return QUICSRT_OK;
 }
 
-void websrt_publisher_stop(websrt_publisher_t* pub)
+void quicsrt_publisher_stop(quicsrt_publisher_t* pub)
 {
     if (pub != nullptr && pub->obj != nullptr)
     {
@@ -225,16 +225,16 @@ void websrt_publisher_stop(websrt_publisher_t* pub)
     }
 }
 
-websrt_status_t websrt_publisher_stats(websrt_publisher_t* pub, char* buf, size_t buflen)
+quicsrt_status_t quicsrt_publisher_stats(quicsrt_publisher_t* pub, char* buf, size_t buflen)
 {
     if (pub == nullptr || pub->obj == nullptr || buf == nullptr || buflen == 0)
     {
-        return WEBSRT_EINVAL;
+        return QUICSRT_EINVAL;
     }
     return FormatPublisherStats(pub, buf, buflen);
 }
 
-const char* websrt_publisher_last_error(websrt_publisher_t* pub)
+const char* quicsrt_publisher_last_error(quicsrt_publisher_t* pub)
 {
     if (pub == nullptr)
     {
@@ -244,11 +244,11 @@ const char* websrt_publisher_last_error(websrt_publisher_t* pub)
     return pub->error.c_str();
 }
 
-websrt_subscriber_t* websrt_subscriber_create(void)
+quicsrt_subscriber_t* quicsrt_subscriber_create(void)
 {
     try
     {
-        return new websrt_subscriber_t(std::make_unique<websrt::Subscriber>());
+        return new quicsrt_subscriber_t(std::make_unique<quicsrt::Subscriber>());
     }
     catch (...)
     {
@@ -256,27 +256,27 @@ websrt_subscriber_t* websrt_subscriber_create(void)
     }
 }
 
-void websrt_subscriber_destroy(websrt_subscriber_t* sub)
+void quicsrt_subscriber_destroy(quicsrt_subscriber_t* sub)
 {
     delete sub;
 }
 
-websrt_status_t websrt_subscriber_start(
-    websrt_subscriber_t* sub, const char* host, int port, const char* stream,
+quicsrt_status_t quicsrt_subscriber_start(
+    quicsrt_subscriber_t* sub, const char* host, int port, const char* stream,
     const char* cert_hash_hex, int latency_ms, int timeout_ms)
 {
     if (sub == nullptr || sub->obj == nullptr)
     {
-        return WEBSRT_EINVAL;
+        return QUICSRT_EINVAL;
     }
     if (host == nullptr || stream == nullptr)
     {
         sub->error = "host and stream must be non-NULL";
-        return WEBSRT_EINVAL;
+        return QUICSRT_EINVAL;
     }
     try
     {
-        websrt::SubscriberConfig cfg;
+        quicsrt::SubscriberConfig cfg;
         cfg.host            = host;
         cfg.port            = port > 0 && port <= 65535 ? static_cast<std::uint16_t>(port) : kDefaultPort;
         cfg.stream_name     = stream;
@@ -290,34 +290,34 @@ websrt_status_t websrt_subscriber_start(
     catch (const std::bad_alloc&)
     {
         sub->error = "out of memory";
-        return WEBSRT_ENOMEM;
+        return QUICSRT_ENOMEM;
     }
     catch (...)
     {
         sub->error = "unknown failure";
-        return WEBSRT_EINTERNAL;
+        return QUICSRT_EINTERNAL;
     }
 }
 
-int websrt_subscriber_read(websrt_subscriber_t* sub, void* buf, size_t len, int timeout_ms)
+int quicsrt_subscriber_read(quicsrt_subscriber_t* sub, void* buf, size_t len, int timeout_ms)
 {
     if (sub == nullptr || sub->obj == nullptr)
     {
-        return WEBSRT_READ_INVALID;
+        return QUICSRT_READ_INVALID;
     }
     return sub->obj->Read(buf, len, timeout_ms);
 }
 
-websrt_status_t websrt_subscriber_stats(websrt_subscriber_t* sub, char* buf, size_t buflen)
+quicsrt_status_t quicsrt_subscriber_stats(quicsrt_subscriber_t* sub, char* buf, size_t buflen)
 {
     if (sub == nullptr || sub->obj == nullptr || buf == nullptr || buflen == 0)
     {
-        return WEBSRT_EINVAL;
+        return QUICSRT_EINVAL;
     }
     return FormatSubscriberStats(sub, buf, buflen);
 }
 
-void websrt_subscriber_stop(websrt_subscriber_t* sub)
+void quicsrt_subscriber_stop(quicsrt_subscriber_t* sub)
 {
     if (sub != nullptr && sub->obj != nullptr)
     {
@@ -325,7 +325,7 @@ void websrt_subscriber_stop(websrt_subscriber_t* sub)
     }
 }
 
-const char* websrt_subscriber_last_error(websrt_subscriber_t* sub)
+const char* quicsrt_subscriber_last_error(quicsrt_subscriber_t* sub)
 {
     if (sub == nullptr)
     {

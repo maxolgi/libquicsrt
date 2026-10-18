@@ -1,7 +1,7 @@
-#ifndef WEBSRT_VERSION_HPP
-#define WEBSRT_VERSION_HPP
+#ifndef QUICSRT_VERSION_HPP
+#define QUICSRT_VERSION_HPP
 
-namespace websrt
+namespace quicsrt
 {
 
 // Numeric components of the library version (mirrors the CMake project version).
@@ -18,6 +18,6 @@ const char* version_string();
 // Library version as numeric components.
 Version version();
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_VERSION_HPP
+#endif // QUICSRT_VERSION_HPP

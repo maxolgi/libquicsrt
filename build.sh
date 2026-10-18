@@ -7,16 +7,16 @@ Usage: ./build.sh <command>
 
 Commands:
     setup      One-time: submodule init, BoringSSL fetch+build, CMake configure (release)
-    lib        Build libwebsrt (+ libsrt, lsquic)
+    lib        Build libquicsrt (+ libsrt, lsquic)
     test       Run tests via ctest (release)
     install    Stage a cmake --install tree ([prefix], default build/release/stage)
-    ffmpeg     Build patched upstream FFmpeg with the websrt protocol AND the
-               system libsrt (--enable-libsrt): stages the shared libwebsrt.so
+    ffmpeg     Build patched upstream FFmpeg with the quicsrt protocol AND the
+               system libsrt (--enable-libsrt): stages the shared libquicsrt.so
                (C-ABI-only exports) so both protocols coexist in one binary
 
 Environment:
-    WEBSRT_ENABLE_WT=OFF  setup without WebTransport: skips BoringSSL and
-                          configures CMake with -DWEBSRT_ENABLE_WT=OFF
+    QUICSRT_ENABLE_WT=OFF  setup without WebTransport: skips BoringSSL and
+                          configures CMake with -DQUICSRT_ENABLE_WT=OFF
                           (M0/CI fast path, no lsquic either)
 EOF
 }
@@ -25,7 +25,7 @@ EOF
 # the revision lsquic CI builds against).
 BORINGSSL_COMMIT=e20e8486554098772673b55ea76bb003d0b330e5
 
-# Pinned FFmpeg master snapshot: the websrt protocol patch
+# Pinned FFmpeg master snapshot: the quicsrt protocol patch
 # (examples/ffmpeg/) is cut against master for upstream submission, so the
 # local gate builds that same snapshot. Deliberately pinned for
 # reproducibility; bumping = update the SHA, re-verify ./build.sh ffmpeg
@@ -45,7 +45,7 @@ setup_boringssl() {
         git -C deps/boringssl checkout -f "$BORINGSSL_COMMIT"
     fi
     # POSITION_INDEPENDENT_CODE: the archives must link into the shared
-    # libwebsrt.so flavor (WEBSRT_BUILD_SHARED); harmless for static
+    # libquicsrt.so flavor (QUICSRT_BUILD_SHARED); harmless for static
     # consumers.
     cmake -S deps/boringssl -B deps/boringssl/build \
         -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
@@ -53,26 +53,26 @@ setup_boringssl() {
     cmake --build deps/boringssl/build -j "$(nproc)"
 }
 
-# Stage a cmake --install tree: libwebsrt.a + static dep chain + headers +
-# websrt.pc under the given prefix (default build/release/stage). The
+# Stage a cmake --install tree: libquicsrt.a + static dep chain + headers +
+# quicsrt.pc under the given prefix (default build/release/stage). The
 # ffmpeg target points pkg-config at <stage>/lib/pkgconfig.
 stage_install() {
     local prefix="${1:-$PWD/build/release/stage}"
     cmake --install build/release --prefix "$prefix"
 }
 
-# The shared C-ABI flavor staged for FFmpeg: libwebsrt.so exports only
-# websrt_* (cmake/websrt_shared.map); the srt fork, lsquic, and BoringSSL
+# The shared C-ABI flavor staged for FFmpeg: libquicsrt.so exports only
+# quicsrt_* (cmake/quicsrt_shared.map); the srt fork, lsquic, and BoringSSL
 # are baked in as local symbols. This is what lets the same ffmpeg binary
 # also link a system libsrt (--enable-libsrt) - two srt copies in one
 # process must not share the flat srt_* namespace.
 build_shared() {
-    cmake -S . -B build/shared -DCMAKE_BUILD_TYPE=Release -DWEBSRT_BUILD_SHARED=ON
-    cmake --build build/shared --target websrt -j "$(nproc)"
+    cmake -S . -B build/shared -DCMAKE_BUILD_TYPE=Release -DQUICSRT_BUILD_SHARED=ON
+    cmake --build build/shared --target quicsrt -j "$(nproc)"
     cmake --install build/shared --prefix build/shared/stage
     # The srt and lsquic submodules' own install rules leak their headers,
     # static archives, and a non-relocatable srt.pc into the stage. Prune:
-    # this prefix must export exactly the websrt C ABI, and pkg-config
+    # this prefix must export exactly the quicsrt C ABI, and pkg-config
     # `srt` has to keep resolving to the system for --enable-libsrt.
     rm -rf build/shared/stage/include/srt \
            build/shared/stage/include/lsquic \
@@ -84,32 +84,32 @@ build_shared() {
            build/shared/stage/share
 }
 
-# Patched upstream FFmpeg with the websrt:// protocol (examples/ffmpeg/).
+# Patched upstream FFmpeg with the quicsrt:// protocol (examples/ffmpeg/).
 # deps/ffmpeg is fetched (gitignored) at the pinned master snapshot, the
 # committed patch applied, and ffmpeg + ffprobe built against the staged
-# shared libwebsrt.so's websrt.pc (build_shared above) PLUS the system
+# shared libquicsrt.so's quicsrt.pc (build_shared above) PLUS the system
 # libsrt (--enable-libsrt) - one binary, both protocols, no shared
 # symbols between the two srt copies. Idempotent: skips the clone when
 # the pin matches, the apply when the tree is already patched, and the
 # compile is incremental.
 build_ffmpeg() {
-    local patch="examples/ffmpeg/0001-avformat-add-websrt-protocol.patch"
+    local patch="examples/ffmpeg/0001-avformat-add-quicsrt-protocol.patch"
     local repo_dir="$PWD"
 
     [ -f deps/boringssl/build/libssl.a ] || {
-        echo "build.sh: ffmpeg: BoringSSL not built (run ./build.sh setup with WEBSRT_ENABLE_WT=ON)" >&2
+        echo "build.sh: ffmpeg: BoringSSL not built (run ./build.sh setup with QUICSRT_ENABLE_WT=ON)" >&2
         exit 1
     }
 
     build_shared
-    [ -f "$repo_dir/build/shared/stage/lib/pkgconfig/websrt.pc" ] || {
-        echo "build.sh: ffmpeg: staged websrt.pc missing" >&2
+    [ -f "$repo_dir/build/shared/stage/lib/pkgconfig/quicsrt.pc" ] || {
+        echo "build.sh: ffmpeg: staged quicsrt.pc missing" >&2
         exit 1
     }
 
     # A raw SHA can't be used with `git clone --branch`, so init + fetch
     # the pin directly. reset+clean matter: an already-patched tree would
-    # otherwise leave the patch's untracked files (websrtproto.c) behind,
+    # otherwise leave the patch's untracked files (quicsrtproto.c) behind,
     # breaking the apply step below.
     if [ ! -d deps/ffmpeg/.git ]; then
         git init -q deps/ffmpeg
@@ -125,7 +125,7 @@ build_ffmpeg() {
         git -C deps/ffmpeg clean -fdqx
     fi
 
-    if [ ! -f deps/ffmpeg/libavformat/websrtproto.c ]; then
+    if [ ! -f deps/ffmpeg/libavformat/quicsrtproto.c ]; then
         git -C deps/ffmpeg apply "$repo_dir/$patch"
     fi
 
@@ -138,7 +138,7 @@ build_ffmpeg() {
         }
     fi
 
-    # System srt for --enable-libsrt: the coexistence pair of websrt://.
+    # System srt for --enable-libsrt: the coexistence pair of quicsrt://.
     # Checked WITHOUT the staged prefix on PKG_CONFIG_PATH (that env is
     # configure-only below), so this probes the system module.
     if ! pkg-config --exists srt; then
@@ -150,7 +150,7 @@ build_ffmpeg() {
     fi
 
     (cd deps/ffmpeg && PKG_CONFIG_PATH="$repo_dir/build/shared/stage/lib/pkgconfig" ./configure \
-        --enable-gpl --enable-libx264 --enable-libwebsrt --enable-libsrt)
+        --enable-gpl --enable-libx264 --enable-libquicsrt --enable-libsrt)
     make -C deps/ffmpeg -j "$(nproc)" ffmpeg ffprobe
     echo "build.sh: ffmpeg: binaries at deps/ffmpeg/ffmpeg and deps/ffmpeg/ffprobe"
 }
@@ -160,11 +160,11 @@ case "${1:-}" in
     setup)
         # lsquic declares the ls-qpack and ls-hpack submodules, so --recursive
         git submodule update --init --recursive
-        wt="${WEBSRT_ENABLE_WT:-ON}"
+        wt="${QUICSRT_ENABLE_WT:-ON}"
         if [ "$wt" = "ON" ]; then
             setup_boringssl
         fi
-        cmake --preset release -DWEBSRT_ENABLE_WT="$wt"
+        cmake --preset release -DQUICSRT_ENABLE_WT="$wt"
         ;;
     lib)
         cmake --build --preset release

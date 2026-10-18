@@ -78,18 +78,18 @@ sockaddr_in FillV4(const char* ip, uint16_t port)
 
 void SelectionUnits()
 {
-    Check([] { return websrt::InitialRttSeedMs(0, 3) == 3; }, "unset keeps the measured seed");
-    Check([] { return websrt::InitialRttSeedMs(0, 0) == 0; }, "unset keeps unmeasured at 0");
-    Check([] { return websrt::InitialRttSeedMs(500, 3) == 500; }, "explicit overrides the measured seed");
-    Check([] { return websrt::InitialRttSeedMs(500, 0) == 500; }, "explicit overrides unmeasured");
-    Check([] { return websrt::InitialRttSeedMs(40000, 3) == 30000; }, "explicit passes the 1..30000 bounds");
+    Check([] { return quicsrt::InitialRttSeedMs(0, 3) == 3; }, "unset keeps the measured seed");
+    Check([] { return quicsrt::InitialRttSeedMs(0, 0) == 0; }, "unset keeps unmeasured at 0");
+    Check([] { return quicsrt::InitialRttSeedMs(500, 3) == 500; }, "explicit overrides the measured seed");
+    Check([] { return quicsrt::InitialRttSeedMs(500, 0) == 500; }, "explicit overrides unmeasured");
+    Check([] { return quicsrt::InitialRttSeedMs(40000, 3) == 30000; }, "explicit passes the 1..30000 bounds");
 }
 
 // ---- (2) session-level seed readback ----
 
 struct Harness
 {
-    websrt::ReceiverCore* core           = nullptr;
+    quicsrt::ReceiverCore* core           = nullptr;
     SRTVirtualTransport*  caller_vt      = nullptr;
     sockaddr_in           listener_label = {};
     // Core->caller gate for the backpressure case: datagrams still allowed
@@ -138,19 +138,19 @@ struct WirePair
     // Declaration order matters: the core's teardown rides the harness
     // (the sink dereferences it), so h must outlive core.
     Harness                               h;
-    std::unique_ptr<websrt::ReceiverCore> core;
+    std::unique_ptr<quicsrt::ReceiverCore> core;
     SRTSOCKET                             caller = SRT_INVALID_SOCK;
 };
 
 // Builds the pair and drives the HSv5 handshake to completion. Returns
 // false (leaving the pair safe for TeardownWirePair) on failure.
-bool EstablishWirePair(WirePair& w, const websrt::ReceiverCoreParams& params, int measured_ms)
+bool EstablishWirePair(WirePair& w, const quicsrt::ReceiverCoreParams& params, int measured_ms)
 {
     // The listener label the core binds before listening (a pure label);
     // the caller's fake source label is the core's own peer_label_.
     w.h.listener_label = FillV4("10.213.255.254", 0);
 
-    w.core   = std::make_unique<websrt::ReceiverCore>(params, &CoreSink, &w.h);
+    w.core   = std::make_unique<quicsrt::ReceiverCore>(params, &CoreSink, &w.h);
     w.h.core = w.core.get();
 
     std::string error;
@@ -221,7 +221,7 @@ void TeardownWirePair(WirePair& w)
 double AcceptedSeedMs(int configured_ms, int measured_ms)
 {
     WirePair                   w;
-    websrt::ReceiverCoreParams params;
+    quicsrt::ReceiverCoreParams params;
     params.initial_rtt_ms = configured_ms;
 
     double ms_rtt = -1.0;
@@ -268,8 +268,8 @@ void SessionSeed()
 void StopUnblocksRead()
 {
     WirePair                   w;
-    websrt::ReceiverCoreParams params;
-    int                        read_result = websrt::ReceiverCore::kReadInvalidArg;
+    quicsrt::ReceiverCoreParams params;
+    int                        read_result = quicsrt::ReceiverCore::kReadInvalidArg;
     if (!EstablishWirePair(w, params, 0))
     {
         TeardownWirePair(w);
@@ -277,7 +277,7 @@ void StopUnblocksRead()
     }
 
     std::atomic<bool> reading{false};
-    char              buf[websrt::kSrtPayloadSize];
+    char              buf[quicsrt::kSrtPayloadSize];
     std::thread       reader(
         [&]
         {
@@ -295,7 +295,7 @@ void StopUnblocksRead()
     const std::string reason = w.core->close_reason();
     TeardownWirePair(w);
 
-    Check([&] { return read_result == websrt::ReceiverCore::kReadEnd; },
+    Check([&] { return read_result == quicsrt::ReceiverCore::kReadEnd; },
           "blocked Read interrupted by Stop returns end (got " + std::to_string(read_result) + ")");
     Check([&] { return reason == "stopped locally"; },
           "blocked Read interrupted by Stop keeps the local-stop reason (got \"" + reason + "\")");
@@ -312,22 +312,22 @@ void StopReadRace()
     for (const int head_start_ms : kHeadStartsMs)
     {
         WirePair                   w;
-        websrt::ReceiverCoreParams params;
-        int                        read_result = websrt::ReceiverCore::kReadInvalidArg;
+        quicsrt::ReceiverCoreParams params;
+        int                        read_result = quicsrt::ReceiverCore::kReadInvalidArg;
         if (!EstablishWirePair(w, params, 0))
         {
             TeardownWirePair(w);
             return;
         }
 
-        char        buf[websrt::kSrtPayloadSize];
+        char        buf[quicsrt::kSrtPayloadSize];
         std::thread reader([&] { read_result = w.core->Read(buf, static_cast<int>(sizeof buf), 800); });
         std::this_thread::sleep_for(std::chrono::milliseconds(head_start_ms));
         w.core->Finalize();
         reader.join();
         TeardownWirePair(w);
 
-        Check([&] { return read_result == websrt::ReceiverCore::kReadEnd; },
+        Check([&] { return read_result == quicsrt::ReceiverCore::kReadEnd; },
               "raced Stop vs Read (head start " + std::to_string(head_start_ms) + " ms) returns end (got " +
                   std::to_string(read_result) + ")");
     }
@@ -346,7 +346,7 @@ void SendMessageLoopback()
     constexpr int kTotalBytes = 3 * kChunkBytes + 60;
 
     WirePair                   w;
-    websrt::ReceiverCoreParams params;
+    quicsrt::ReceiverCoreParams params;
     if (!EstablishWirePair(w, params, 0))
     {
         TeardownWirePair(w);
@@ -374,7 +374,7 @@ void SendMessageLoopback()
     }
     std::vector<std::uint8_t> got;
     got.reserve(data.size());
-    char       rbuf[websrt::kSrtPayloadSize]; // >= 940: one chunk fits whole
+    char       rbuf[quicsrt::kSrtPayloadSize]; // >= 940: one chunk fits whole
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kTimeoutMs);
     while (got.size() < data.size() && std::chrono::steady_clock::now() < deadline)
     {
@@ -415,13 +415,13 @@ void SendMessageLoopback()
 void SendBeforeHandshake()
 {
     Harness                          h;
-    const websrt::ReceiverCoreParams params;
-    websrt::ReceiverCore             core(params, &CoreSink, &h);
+    const quicsrt::ReceiverCoreParams params;
+    quicsrt::ReceiverCore             core(params, &CoreSink, &h);
     h.core = &core; // the sink cannot fire before a handshake completes
 
     char      buf[16]      = {};
     const int before_start = core.SendMessage(buf, static_cast<int>(sizeof buf), kTimeoutMs);
-    Check([&] { return before_start == websrt::ReceiverCore::kSendNotHandshaked; },
+    Check([&] { return before_start == quicsrt::ReceiverCore::kSendNotHandshaked; },
           "SendMessage before Start returns not-handshaked (got " + std::to_string(before_start) + ")");
 
     std::string error;
@@ -431,7 +431,7 @@ void SendBeforeHandshake()
         return;
     }
     const int listening = core.SendMessage(buf, static_cast<int>(sizeof buf), kTimeoutMs);
-    Check([&] { return listening == websrt::ReceiverCore::kSendNotHandshaked; },
+    Check([&] { return listening == quicsrt::ReceiverCore::kSendNotHandshaked; },
           "SendMessage with the listener up but no caller returns not-handshaked (got " + std::to_string(listening) +
               ")");
     core.Finalize();
@@ -442,7 +442,7 @@ void SendBeforeHandshake()
 void SendAfterClose()
 {
     WirePair                   w;
-    websrt::ReceiverCoreParams params;
+    quicsrt::ReceiverCoreParams params;
     if (!EstablishWirePair(w, params, 0))
     {
         TeardownWirePair(w);
@@ -453,7 +453,7 @@ void SendAfterClose()
 
     char      buf[16] = {};
     const int closed  = w.core->SendMessage(buf, static_cast<int>(sizeof buf), kTimeoutMs);
-    Check([&] { return closed == websrt::ReceiverCore::kSendClosed; },
+    Check([&] { return closed == quicsrt::ReceiverCore::kSendClosed; },
           "SendMessage after close returns closed (got " + std::to_string(closed) + ")");
 
     TeardownWirePair(w);
@@ -480,7 +480,7 @@ void SendBackpressure()
     constexpr int kGatePass     = 4; // datagrams through before the gate shuts
 
     WirePair                   w;
-    websrt::ReceiverCoreParams params;
+    quicsrt::ReceiverCoreParams params;
     if (!EstablishWirePair(w, params, 0))
     {
         TeardownWirePair(w);
@@ -500,7 +500,7 @@ void SendBackpressure()
     for (int i = 0; i < kMaxSends && !timed_out; ++i)
     {
         const int r = w.core->SendMessage(reinterpret_cast<const char*>(data.data()), kChunkBytes, kSendSliceMs);
-        if (r == websrt::ReceiverCore::kSendTimeout)
+        if (r == quicsrt::ReceiverCore::kSendTimeout)
         {
             timed_out = true;
             break;
@@ -530,7 +530,7 @@ void SendBackpressure()
         Fail(std::string("caller SRTO_RCVTIMEO: ") + srt_getlasterror_str());
     }
     std::vector<std::uint8_t> got;
-    char                      rbuf[websrt::kSrtPayloadSize];
+    char                      rbuf[quicsrt::kSrtPayloadSize];
     const auto                deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kTimeoutMs);
     while (got.size() < data.size() && std::chrono::steady_clock::now() < deadline)
     {

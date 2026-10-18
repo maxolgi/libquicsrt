@@ -1,6 +1,6 @@
-// Publisher: the libwebsrt client for feeding a WebSRT stream (SRT over
+// Publisher: the libquicsrt client for feeding a QuicSRT stream (SRT over
 // WebTransport), the native counterpart of the browser-side publisher
-// and the backend of the FFmpeg websrt:// output.
+// and the backend of the FFmpeg quicsrt:// output.
 //
 // One Publisher instance performs exactly one session. Start() blocks
 // until the stream is fully established (WebTransport CONNECT accepted
@@ -43,10 +43,10 @@
 //
 // Usage sketch:
 //
-//     websrt::PublisherConfig cfg;
+//     quicsrt::PublisherConfig cfg;
 //     cfg.host = "127.0.0.1"; cfg.port = 4433; cfg.stream_name = "demo";
 //     cfg.cert_sha256_hex = "<64 hex chars from cert-hash.js>";
-//     if (pub.Start(cfg) != websrt::kPublishOk) { /* pub.LastError() */ }
+//     if (pub.Start(cfg) != quicsrt::kPublishOk) { /* pub.LastError() */ }
 //     for (each muxed chunk) {
 //         int n = pub.Write(chunk, len, 1000);
 //         if (n < 0) break;                 // error; LastError() has why
@@ -55,17 +55,17 @@
 //     pub.End(5000);                        // graceful stream end
 //
 
-#ifndef WEBSRT_PUBLISHER_HPP
-#define WEBSRT_PUBLISHER_HPP
+#ifndef QUICSRT_PUBLISHER_HPP
+#define QUICSRT_PUBLISHER_HPP
 
 #include <cstddef>
 #include <memory>
 #include <string>
 
-#include "websrt/config.hpp"
-#include "websrt/stats.hpp"
+#include "quicsrt/config.hpp"
+#include "quicsrt/stats.hpp"
 
-namespace websrt
+namespace quicsrt
 {
 
 // Outcome of Publisher::Start().
@@ -151,6 +151,6 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_PUBLISHER_HPP
+#endif // QUICSRT_PUBLISHER_HPP

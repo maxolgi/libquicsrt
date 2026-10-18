@@ -1,12 +1,12 @@
-// Publisher façade (libwebsrt public API): owns the EventLoop, one
+// Publisher façade (libquicsrt public API): owns the EventLoop, one
 // WTClient, and the PublisherSession, and exposes the blocking,
-// exception-free surface declared in include/websrt/publisher.hpp.
+// exception-free surface declared in include/quicsrt/publisher.hpp.
 // Structurally the Subscriber façade with the data plane reversed -
-// see src/websrt/subscriber.cpp for the construction-order and
+// see src/quicsrt/subscriber.cpp for the construction-order and
 // teardown-order rationale (session first, client, loop last; the
 // srt library reference is dropped only in Teardown()).
 
-#include "websrt/publisher.hpp"
+#include "quicsrt/publisher.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -18,11 +18,11 @@
 #include "core/event_loop.h"
 #include "srt.h"
 #include "srt_session/publisher.h"
-#include "websrt/resolve.h"
-#include "websrt/start_status.h"
+#include "quicsrt/resolve.h"
+#include "quicsrt/start_status.h"
 #include "wt/client.h"
 
-namespace websrt
+namespace quicsrt
 {
 
 namespace
@@ -361,4 +361,4 @@ std::string Publisher::LastError() const
     return impl_->LastError();
 }
 
-} // namespace websrt
+} // namespace quicsrt

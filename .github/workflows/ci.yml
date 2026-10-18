@@ -1,4 +1,4 @@
-# CI for libwebsrt: plain build+test plus sanitizer coverage of the
+# CI for libquicsrt: plain build+test plus sanitizer coverage of the
 # full test set. Every job runs plain ctest and requires zero failures.
 
 name: ci
@@ -10,7 +10,7 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Cancel superseded runs on the same ref (same as websrt-gateway-cpp's ci).
+# Cancel superseded runs on the same ref (same as quicsrt-gateway-cpp's ci).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

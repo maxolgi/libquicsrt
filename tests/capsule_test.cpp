@@ -15,9 +15,9 @@
 namespace
 {
 
-using websrt::VarintGet;
-using websrt::VarintPut;
-using websrt::WtCapsuleParser;
+using quicsrt::VarintGet;
+using quicsrt::VarintPut;
+using quicsrt::WtCapsuleParser;
 
 int  g_checks = 0;
 bool g_ok     = true;

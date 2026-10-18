@@ -12,7 +12,7 @@
 #include <cstring>
 #include <utility>
 
-namespace websrt
+namespace quicsrt
 {
 
 namespace
@@ -31,7 +31,7 @@ void EpollCtl(int epfd, int op, int fd, std::uint32_t events)
     ev.data.fd = fd;
     if (0 != ::epoll_ctl(epfd, op, fd, &ev))
     {
-        std::fprintf(stderr, "websrt: epoll_ctl(op=%d, fd=%d) failed: %s\n", op, fd, std::strerror(errno));
+        std::fprintf(stderr, "quicsrt: epoll_ctl(op=%d, fd=%d) failed: %s\n", op, fd, std::strerror(errno));
         std::abort();
     }
 }
@@ -187,7 +187,7 @@ void EventLoop::Run()
             {
                 continue;
             }
-            std::fprintf(stderr, "websrt: epoll_wait failed: %s\n", std::strerror(errno));
+            std::fprintf(stderr, "quicsrt: epoll_wait failed: %s\n", std::strerror(errno));
             break;
         }
         for (int i = 0; i < n; ++i)
@@ -329,4 +329,4 @@ void EventLoop::AssertLoopThread() const // NOLINT(readability-convert-member-fu
     assert(!thread_.joinable() || OnLoopThread());
 }
 
-} // namespace websrt
+} // namespace quicsrt

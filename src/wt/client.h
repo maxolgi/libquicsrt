@@ -1,5 +1,5 @@
 // WebTransport client over lsquic: one engine and one extended-CONNECT
-// session toward a WebSRT gateway, with WT datagrams both ways. The
+// session toward a QuicSRT gateway, with WT datagrams both ways. The
 // proven spike disciplines live here: LSENG_HTTP + QUIC v1 +
 // es_datagrams engine recipe, raw lsxpack
 // extended-CONNECT headers followed by an explicit flush, cert pinning by
@@ -7,8 +7,8 @@
 // interface, capsule skipping with CLOSE detection, and quarter-stream-id
 // context-prefixed datagram framing.
 
-#ifndef WEBSRT_WT_CLIENT_H
-#define WEBSRT_WT_CLIENT_H
+#ifndef QUICSRT_WT_CLIENT_H
+#define QUICSRT_WT_CLIENT_H
 
 #include <netinet/in.h>
 
@@ -33,7 +33,7 @@ typedef struct lsquic_engine lsquic_engine_t;
 typedef struct lsquic_conn   lsquic_conn_t;
 typedef struct lsquic_stream lsquic_stream_t;
 
-namespace websrt
+namespace quicsrt
 { // Consumer callbacks. All fire on the event-loop thread and may call back
 // into WTClient.
 class WTClientListener
@@ -221,6 +221,6 @@ private:
 // lsquic_set_log_level (e.g. "debug"). Process-wide; call before Connect.
 void SetLsquicLogLevel(const char* level);
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_WT_CLIENT_H
+#endif // QUICSRT_WT_CLIENT_H

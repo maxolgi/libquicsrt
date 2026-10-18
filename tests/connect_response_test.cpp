@@ -19,7 +19,7 @@
 namespace
 {
 
-using websrt::ConnectResponseParser;
+using quicsrt::ConnectResponseParser;
 
 constexpr std::size_t kReadChunk = 16384; // the WT client's lsquic read granularity
 
@@ -64,7 +64,7 @@ std::vector<std::uint8_t> MakeHead(std::size_t total)
 
 bool TestSimple200()
 {
-    const auto wire = Bytes("HTTP/1.1 200 OK\r\nserver: websrt-gateway\r\n\r\n");
+    const auto wire = Bytes("HTTP/1.1 200 OK\r\nserver: quicsrt-gateway\r\n\r\n");
 
     ConnectResponseParser parser;
     const std::size_t     consumed = parser.Feed(wire.data(), wire.size());
@@ -290,7 +290,7 @@ bool TestStatusLineVariants()
         return false;
     }
 
-    const auto            garbage = Bytes("WEBSRT-NOT-HTTP\r\n\r\n");
+    const auto            garbage = Bytes("QUICSRT-NOT-HTTP\r\n\r\n");
     ConnectResponseParser garbage_parser;
     garbage_parser.Feed(garbage.data(), garbage.size());
     if (!Check(garbage_parser.done(), "a head with an unparseable line still completes"))
@@ -301,7 +301,7 @@ bool TestStatusLineVariants()
     {
         return false;
     }
-    if (!Check(garbage_parser.status_line() == "WEBSRT-NOT-HTTP", "the unparseable line text is kept"))
+    if (!Check(garbage_parser.status_line() == "QUICSRT-NOT-HTTP", "the unparseable line text is kept"))
     {
         return false;
     }

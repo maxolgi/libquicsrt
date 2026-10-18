@@ -15,7 +15,7 @@
 #include <cstdio>
 #include <string>
 
-#include "websrt/resolve.h"
+#include "quicsrt/resolve.h"
 
 namespace
 {
@@ -50,27 +50,27 @@ int main()
 {
     {
         std::string err = "unset";
-        const auto  ip  = websrt::ResolveHostToIpv4("127.0.0.1", &err);
+        const auto  ip  = quicsrt::ResolveHostToIpv4("127.0.0.1", &err);
         Check([&] { return ip == "127.0.0.1"; }, "literal passthrough (got \"" + ip + "\")");
         Check([&] { return err == "unset"; }, "literal passthrough leaves the error untouched");
     }
     {
-        const auto ip = websrt::ResolveHostToIpv4("192.168.1.2", nullptr);
+        const auto ip = quicsrt::ResolveHostToIpv4("192.168.1.2", nullptr);
         Check([&] { return ip == "192.168.1.2"; }, "second literal passthrough");
     }
     {
         std::string err;
-        const auto  ip = websrt::ResolveHostToIpv4("localhost", &err);
+        const auto  ip = quicsrt::ResolveHostToIpv4("localhost", &err);
         Check([&] { return !ip.empty(); }, "localhost must resolve (error: \"" + err + "\")");
         Check([&] { return IsIpv4Loopback(ip); }, "localhost must be loopback (got " + ip + ")");
     }
     {
         const auto  t0 = std::chrono::steady_clock::now();
         std::string err;
-        const auto  ip = websrt::ResolveHostToIpv4("no-such-host.websrt-cpp.invalid", &err);
+        const auto  ip = quicsrt::ResolveHostToIpv4("no-such-host.quicsrt-cpp.invalid", &err);
         const auto  ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
         Check([&] { return ip.empty(); }, ".invalid name must not resolve (got " + ip + ")");
-        Check([&] { return err.find("no-such-host.websrt-cpp.invalid") != std::string::npos; },
+        Check([&] { return err.find("no-such-host.quicsrt-cpp.invalid") != std::string::npos; },
               "error must name the host (got \"" + err + "\")");
         Check([&] { return ms.count() < 20000; },
               "NXDOMAIN must come back bounded (took " + std::to_string(ms.count()) + " ms)");

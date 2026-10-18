@@ -1,4 +1,4 @@
-// subscriber_test: the libwebsrt public surface.
+// subscriber_test: the libquicsrt public surface.
 //
 // (1) SubscriberConfig::validate() matrix - every field's bounds, plain
 //     checks in the repo's style (no assert, Release-safe).
@@ -10,7 +10,7 @@
 #include <cstdio>
 #include <string>
 
-#include "websrt/subscriber.hpp"
+#include "quicsrt/subscriber.hpp"
 
 namespace
 {
@@ -43,9 +43,9 @@ bool Contains(const std::string& haystack, const char* needle)
 
 // ---- (1) config validation matrix ----
 
-websrt::SubscriberConfig GoodConfig()
+quicsrt::SubscriberConfig GoodConfig()
 {
-    websrt::SubscriberConfig cfg;
+    quicsrt::SubscriberConfig cfg;
     cfg.host            = "127.0.0.1";
     cfg.port            = 4433;
     cfg.stream_name     = "subscriber_test";
@@ -53,12 +53,12 @@ websrt::SubscriberConfig GoodConfig()
     return cfg;
 }
 
-void ExpectValid(const websrt::SubscriberConfig& cfg, const std::string& what)
+void ExpectValid(const quicsrt::SubscriberConfig& cfg, const std::string& what)
 {
     Check([&] { return cfg.validate().empty(); }, what + " must validate");
 }
 
-void ExpectInvalid(const websrt::SubscriberConfig& cfg, const char* fragment, const std::string& what)
+void ExpectInvalid(const quicsrt::SubscriberConfig& cfg, const char* fragment, const std::string& what)
 {
     const std::string error = cfg.validate();
     Check([&] { return !error.empty() && Contains(error, fragment); },
@@ -81,7 +81,7 @@ void TestConfigValidation()
     }
     {
         auto cfg = GoodConfig();
-        cfg.host = "websrt.vyidd.com";
+        cfg.host = "quicsrt.vyidd.com";
         ExpectValid(cfg, "multi-label DNS-name host");
     }
     {
@@ -101,7 +101,7 @@ void TestConfigValidation()
     }
     {
         auto cfg = GoodConfig();
-        cfg.host = "websrt://gw";
+        cfg.host = "quicsrt://gw";
         ExpectInvalid(cfg, "host", "scheme in host");
     }
     {
@@ -268,23 +268,23 @@ void TestConfigValidation()
 void TestOfflineMisuse()
 {
     {
-        websrt::Subscriber sub;
+        quicsrt::Subscriber sub;
         char               buf[1128];
-        Check([&] { return sub.Read(buf, sizeof buf, 0) == websrt::kReadNotStarted; },
+        Check([&] { return sub.Read(buf, sizeof buf, 0) == quicsrt::kReadNotStarted; },
               "Read before Start must be kReadNotStarted");
-        websrt::SubscriberStats stats;
-        Check([&] { return sub.Stats(&stats) == websrt::kStatsNotConnected; }, "Stats before Start");
+        quicsrt::SubscriberStats stats;
+        Check([&] { return sub.Stats(&stats) == quicsrt::kStatsNotConnected; }, "Stats before Start");
         Check([&] { return sub.LastError().empty(); }, "no error recorded yet");
     }
     {
         auto        cfg = GoodConfig();
         const auto* bad = &cfg;
         cfg.stream_name = "has space";
-        websrt::Subscriber sub;
-        Check([&] { return sub.Start(*bad) == websrt::kStartInvalidConfig; }, "Start with invalid config");
+        quicsrt::Subscriber sub;
+        Check([&] { return sub.Start(*bad) == quicsrt::kStartInvalidConfig; }, "Start with invalid config");
         Check([&] { return !sub.LastError().empty(); }, "invalid config records LastError");
         char buf[1128];
-        Check([&] { return sub.Read(buf, sizeof buf, 0) == websrt::kReadNotStarted; },
+        Check([&] { return sub.Read(buf, sizeof buf, 0) == quicsrt::kReadNotStarted; },
               "Read after invalid-config Start");
         // The instance was not consumed by a failed validation: a corrected
         // config may still be started (it will fail at the transport here,
@@ -294,11 +294,11 @@ void TestOfflineMisuse()
         cfg.port               = 1; // nothing listens there
         cfg.connect_timeout_ms = 500;
         const auto status      = sub.Start(cfg);
-        Check([&] { return status == websrt::kStartTimedOut || status == websrt::kStartConnectFailed; },
+        Check([&] { return status == quicsrt::kStartTimedOut || status == quicsrt::kStartConnectFailed; },
               "corrected-config Start must reach the transport, not kStartAlreadyStarted");
-        Check([&] { return sub.Start(cfg) == websrt::kStartAlreadyStarted; }, "second Start is single-shot");
+        Check([&] { return sub.Start(cfg) == quicsrt::kStartAlreadyStarted; }, "second Start is single-shot");
         sub.Stop();
-        Check([&] { return sub.Read(buf, sizeof buf, 0) == websrt::kReadClosed; },
+        Check([&] { return sub.Read(buf, sizeof buf, 0) == quicsrt::kReadClosed; },
               "Read after failed Start is kReadClosed");
     }
     {
@@ -306,20 +306,20 @@ void TestOfflineMisuse()
         // TLD is reserved for exactly this; NXDOMAIN latency is the local
         // resolver's, asserted bounded rather than fast).
         auto cfg               = GoodConfig();
-        cfg.host               = "no-such-host.websrt-cpp.invalid";
+        cfg.host               = "no-such-host.quicsrt-cpp.invalid";
         cfg.connect_timeout_ms = 500;
         const auto         t0  = std::chrono::steady_clock::now();
-        websrt::Subscriber sub;
+        quicsrt::Subscriber sub;
         const auto         status = sub.Start(cfg);
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
-        Check([&] { return status == websrt::kStartInvalidTarget; },
+        Check([&] { return status == quicsrt::kStartInvalidTarget; },
               "unresolvable host must kStartInvalidTarget (got " + std::to_string(status) + ")");
         Check([&] { return Contains(sub.LastError(), "resolve"); },
               "unresolvable host must name the resolution failure (got \"" + sub.LastError() + "\")");
         Check([&] { return ms.count() < 20000; },
               "unresolvable host must fail bounded (took " + std::to_string(ms.count()) + " ms)");
         char buf[1128];
-        Check([&] { return sub.Read(buf, sizeof buf, 0) == websrt::kReadClosed; },
+        Check([&] { return sub.Read(buf, sizeof buf, 0) == quicsrt::kReadClosed; },
               "Read after resolve failure is kReadClosed");
         sub.Stop();
     }

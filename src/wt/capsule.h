@@ -4,8 +4,8 @@
 // the unit tests drive. This is the sole implementation; WTClient and
 // external consumers (the gateway) link against it.
 
-#ifndef WEBSRT_WT_CAPSULE_H
-#define WEBSRT_WT_CAPSULE_H
+#ifndef QUICSRT_WT_CAPSULE_H
+#define QUICSRT_WT_CAPSULE_H
 
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace websrt
+namespace quicsrt
 {
 
 // QUIC varint (RFC 9000 s.16): 2-bit length prefix, big-endian payload.
@@ -71,6 +71,6 @@ private:
     bool                      overflow_ = false;
 };
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_WT_CAPSULE_H
+#endif // QUICSRT_WT_CAPSULE_H

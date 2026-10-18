@@ -23,14 +23,14 @@
 #include <mutex>
 #include <utility>
 
-namespace websrt
+namespace quicsrt
 {
 
 namespace
 {
 
 constexpr std::size_t kRecvBufSize = 16384;
-constexpr char        kUserAgent[] = "websrt-cpp";
+constexpr char        kUserAgent[] = "quicsrt-cpp";
 
 void Log(const char* fmt, ...)
 {
@@ -156,7 +156,7 @@ struct WtClientCallbacks
             // a nearly-full packet (pf_gen_datagram_frame passes
             // MIN(avail, max)), which is not a transport ceiling - large
             // queued datagrams (SRT data packets) must wait for the next
-            // fresh packet instead of being dropped. WebSRT requires
+            // fresh packet instead of being dropped. QuicSRT requires
             // >= 1200-byte WT datagram support, so kMaxDatagramSize
             // always fits the peer's advertised frame maximum.
             if (lsquic_conn_set_min_datagram_size(conn, kMaxDatagramSize) != 0)
@@ -977,4 +977,4 @@ int WTClient::UdpPacketsReceived() const
     return udp_packets_received_.load();
 }
 
-} // namespace websrt
+} // namespace quicsrt

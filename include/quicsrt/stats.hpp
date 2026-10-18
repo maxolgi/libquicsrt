@@ -1,4 +1,4 @@
-// Session statistics (libwebsrt public API).
+// Session statistics (libquicsrt public API).
 //
 // Stable, documented subsets of the underlying SRT socket statistics
 // (srt_bstats on the accepted data socket, lifetime totals, no clearing).
@@ -7,12 +7,12 @@
 // payload counts as 1172 bytes. Rate and window fields are the
 // instantaneous values at the moment of the snapshot.
 
-#ifndef WEBSRT_STATS_HPP
-#define WEBSRT_STATS_HPP
+#ifndef QUICSRT_STATS_HPP
+#define QUICSRT_STATS_HPP
 
 #include <cstdint>
 
-namespace websrt
+namespace quicsrt
 {
 
 // Outcome of Subscriber::Stats() / Publisher::Stats().
@@ -56,7 +56,7 @@ struct SubscriberStats
 };
 
 // The sender-side view of the same srt_bstats snapshot: what a Publisher
-// (and the FFmpeg websrt:// output) needs to judge a stream's health.
+// (and the FFmpeg quicsrt:// output) needs to judge a stream's health.
 struct PublisherStats
 {
     // Milliseconds since the SRT connection was established.
@@ -83,6 +83,6 @@ struct PublisherStats
     std::int32_t ms_tsbpd_delay    = 0; // negotiated delivery delay in effect
 };
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_STATS_HPP
+#endif // QUICSRT_STATS_HPP

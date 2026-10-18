@@ -1,5 +1,5 @@
 // SRT-over-WT publisher session: the native analogue of the browser-side
-// publisher (WebSRT web/src/worker.ts driving crates/srt-wasm). The
+// publisher (QuicSRT web/src/worker.ts driving crates/srt-wasm). The
 // gateway is the SRT initiator (caller) for EVERY session, publisher
 // included: on WT session ready this session creates one forked-srt
 // socket in virtual-transport mode, binds it to a label address, puts
@@ -70,8 +70,8 @@
 // accepted socket open to drain TSBPD-held RECEIVED data, but a publisher
 // receives only ACK/NAK, so the teardown is immediate.
 
-#ifndef WEBSRT_SRT_SESSION_PUBLISHER_H
-#define WEBSRT_SRT_SESSION_PUBLISHER_H
+#ifndef QUICSRT_SRT_SESSION_PUBLISHER_H
+#define QUICSRT_SRT_SESSION_PUBLISHER_H
 
 #include <arpa/inet.h>
 
@@ -90,7 +90,7 @@
 // The fork's gated API (build with SRT_ENABLE_VIRTUAL_TRANSPORT defined).
 #include "srt.h"
 
-namespace websrt
+namespace quicsrt
 {
 
 struct PublisherSessionParams
@@ -144,7 +144,7 @@ public:
     // Write outcomes; positive values carry the byte count accepted from
     // the caller's buffer, so Write() returns plain int and these are its
     // documented constants. They mirror the public Publisher's values
-    // (include/websrt/publisher.hpp).
+    // (include/quicsrt/publisher.hpp).
     enum WriteResult
     {
         kWriteNotStarted = -1,
@@ -275,6 +275,6 @@ private:
     std::atomic<bool> closed_{false};
 };
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_SRT_SESSION_PUBLISHER_H
+#endif // QUICSRT_SRT_SESSION_PUBLISHER_H

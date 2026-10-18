@@ -19,8 +19,8 @@
 namespace
 {
 
-using websrt::EngineHost;
-using websrt::EventLoop;
+using quicsrt::EngineHost;
+using quicsrt::EventLoop;
 
 constexpr std::chrono::milliseconds kWaitBudget{2000};
 
@@ -149,8 +149,8 @@ bool TestTimers()
     std::atomic<int>   one_shot_fires{0};
     std::atomic<int>   repeating_fires{0};
     std::atomic<bool>  cancelled_one_shot_fired{false};
-    EventLoop::TimerId self_cancelling = websrt::EventLoop::kInvalidTimerId;
-    EventLoop::TimerId never_fires     = websrt::EventLoop::kInvalidTimerId;
+    EventLoop::TimerId self_cancelling = quicsrt::EventLoop::kInvalidTimerId;
+    EventLoop::TimerId never_fires     = quicsrt::EventLoop::kInvalidTimerId;
 
     loop.SetTimer(std::chrono::milliseconds{20}, false, [&] { one_shot_fires.fetch_add(1); });
     self_cancelling = loop.SetTimer(std::chrono::milliseconds{15},

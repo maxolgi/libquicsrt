@@ -24,7 +24,7 @@
 namespace
 {
 
-constexpr int     kPayloadSize  = 1128; // 6 x 188-byte TS packets - the WebSRT constant
+constexpr int     kPayloadSize  = 1128; // 6 x 188-byte TS packets - the QuicSRT constant
 constexpr int     kNumMessages  = 20000;
 constexpr int     kVictimIndex  = kNumMessages / 2; // the swallowed original lives mid-stream
 constexpr int     kLatencyMs    = 120;              // gateway ingest default; TSBPD window for NAK recovery

@@ -1,9 +1,9 @@
-# FFmpeg `websrt://` protocol
+# FFmpeg `quicsrt://` protocol
 
-`websrt://host:port?stream=NAME` as input and output, against upstream
+`quicsrt://host:port?stream=NAME` as input and output, against upstream
 FFmpeg. Built by `./build.sh ffmpeg`: fetches upstream FFmpeg at the
 pinned master snapshot (`FFMPEG_MASTER_COMMIT` in `build.sh`),
-applies `0001-avformat-add-websrt-protocol.patch`, and builds
+applies `0001-avformat-add-quicsrt-protocol.patch`, and builds
 `deps/ffmpeg/ffmpeg` + `ffprobe` linked against the staged install
 tree (pkg-config prefix `build/release/stage`, from
 `./build.sh install`). Full chain (WebTransport enabled):
@@ -15,7 +15,7 @@ Bumping the FFmpeg pin = update `FFMPEG_MASTER_COMMIT` and re-verify
 
 ## URL grammar
 
-    websrt://host:port?stream=NAME[&cert_hash=HEX][&cert_hash_file=PATH][&pki=1][&latency_ms=N]
+    quicsrt://host:port?stream=NAME[&cert_hash=HEX][&cert_hash_file=PATH][&pki=1][&latency_ms=N]
 
 - **Direction decides semantics**: an *output* (URL_WRONLY) publishes
   `NAME` toward the gateway (`?publish=NAME`); an *input* subscribes
@@ -26,13 +26,13 @@ Bumping the FFmpeg pin = update `FFMPEG_MASTER_COMMIT` and re-verify
   pins like a browser's `serverCertificateHashes`.
 - `cert_hash_file=PATH` — read the gateway's runtime `cert-hash.js`
   (a web artifact: `window.CERT_HASH = "<hex>"`; `= null` selects PKI)
-  and use its value — same parser as websrt-dump's
+  and use its value — same parser as quicsrt-dump's
   `--cert-hash-file`; a missing or malformed file fails the open.
 - `pki=1` — normal PKI validation. **Default** when no cert parameter
   is given.
 - `latency_ms=N` — TSBPD latency floor (default 120).
 - All parameters are also protocol AVOptions (e.g. `ffmpeg -stream NAME
-  -i websrt://gw:4435`); a URL parameter takes precedence over the
+  -i quicsrt://gw:4435`); a URL parameter takes precedence over the
   option value. String values are percent-decoded
   (`cert_hash_file=/tmp/a%20b.js`); `pki=1` is the only accepted value.
 
@@ -42,16 +42,16 @@ Canonical form (works verbatim once the gateway host/port and cert are
 resolved):
 
     ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=30 -f lavfi -i sine=frequency=440 \
-           -c:v libx264 -preset veryfast -c:a aac -f mpegts websrt://gw:443?stream=test
-    ffmpeg -f mpegts -i websrt://gw:443?stream=test -c copy out.ts
+           -c:v libx264 -preset veryfast -c:a aac -f mpegts quicsrt://gw:443?stream=test
+    ffmpeg -f mpegts -i quicsrt://gw:443?stream=test -c copy out.ts
 
-Locally, run the pair against the supervised `websrt-cpp` gateway
-(ports per its live config, `/etc/websrt-cpp/gateway.conf` — currently
+Locally, run the pair against the supervised `QuicSRT-gateway`
+(ports per its live config, `/etc/QuicSRT-gateway/gateway.conf` — currently
 WT 4435, web 8443; never launch an ad-hoc gateway):
 
     CERT_JS=$(mktemp)
     curl -fsS -k https://127.0.0.1:8443/cert-hash.js >"$CERT_JS"
-    URL="websrt://127.0.0.1:4435?stream=test&cert_hash_file=$CERT_JS"
+    URL="quicsrt://127.0.0.1:4435?stream=test&cert_hash_file=$CERT_JS"
 
     ./deps/ffmpeg/ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
         -re -f lavfi -i sine=frequency=440 \

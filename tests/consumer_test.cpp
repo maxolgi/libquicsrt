@@ -1,7 +1,7 @@
 // consumer_test: proves the consumer export contract. Built in its own
-// CMake directory scope (tests/consumer/) against ONLY websrt::websrt and
-// websrt::wt-deps - the surface an out-of-tree consumer (the
-// websrt-gateway-cpp repo, add_subdirectory(deps/libwebsrt)) sees. No
+// CMake directory scope (tests/consumer/) against ONLY quicsrt::quicsrt and
+// quicsrt::wt-deps - the surface an out-of-tree consumer (the
+// quicsrt-gateway-cpp repo, add_subdirectory(deps/libquicsrt)) sees. No
 // source-tree include paths, no deps/ paths: headers, defines, and link
 // must all arrive through the interface targets.
 
@@ -11,9 +11,9 @@
 #include <thread>
 
 #include "core/event_loop.h" // internal header via the src/ interface dir
-#include "lsquic.h"          // via websrt::wt-deps
-#include "srt.h"             // via websrt::websrt -> websrt::srt-deps
-#include "websrt/websrt_c.h" // public API via the include/ interface dir
+#include "lsquic.h"          // via quicsrt::wt-deps
+#include "srt.h"             // via quicsrt::quicsrt -> quicsrt::srt-deps
+#include "quicsrt/quicsrt_c.h" // public API via the include/ interface dir
 
 namespace
 {
@@ -49,7 +49,7 @@ int main()
     // (c) internal headers via the src/ interface include dir: drive a
     // real loop from the consumer side.
     {
-        websrt::EventLoop loop;
+        quicsrt::EventLoop loop;
         std::atomic<bool> posted{false};
         loop.Start();
         check(loop.Post([&posted] { posted = true; }), "EventLoop Post accepted");
@@ -60,14 +60,14 @@ int main()
     }
 
     // The library's own version entry point (C ABI).
-    const char* v = websrt_version();
-    check(v != nullptr && v[0] != '\0', "websrt_version()");
+    const char* v = quicsrt_version();
+    check(v != nullptr && v[0] != '\0', "quicsrt_version()");
 
     if (g_failures != 0)
     {
         std::fprintf(stderr, "consumer_test: %d failure(s)\n", g_failures);
         return 1;
     }
-    std::printf("consumer_test: OK (export contract holds, websrt_version %s)\n", v);
+    std::printf("consumer_test: OK (export contract holds, quicsrt_version %s)\n", v);
     return 0;
 }

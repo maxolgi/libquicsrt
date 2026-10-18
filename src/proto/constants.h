@@ -1,18 +1,18 @@
-// Protocol constants shared across the WebSRT layers (WT transport, SRT
+// Protocol constants shared across the QuicSRT layers (WT transport, SRT
 // sessions, public-config defaults). One home so the client library and
 // its consumers (the gateway) cannot drift apart.
 
-#ifndef WEBSRT_PROTO_CONSTANTS_H
-#define WEBSRT_PROTO_CONSTANTS_H
+#ifndef QUICSRT_PROTO_CONSTANTS_H
+#define QUICSRT_PROTO_CONSTANTS_H
 
 #include <algorithm>
 #include <cstddef>
 
-namespace websrt
+namespace quicsrt
 {
 
 // SRT live payload: 6 x 188-byte MPEG-TS packets. Matches the Rust
-// reference (crates/websrt/src/srt_sender.rs); the handshake negotiates
+// reference (crates/quicsrt/src/srt_sender.rs); the handshake negotiates
 // min(gateway, client). Do not "fix" to 1316.
 constexpr int kSrtPayloadSize = 1128;
 
@@ -54,6 +54,6 @@ inline int InitialRttSeedMs(int configured_ms, int measured_ms)
     return measured_ms;
 }
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_PROTO_CONSTANTS_H
+#endif // QUICSRT_PROTO_CONSTANTS_H

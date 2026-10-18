@@ -18,8 +18,8 @@
 //
 // The peer label, options table, and buffer depth are the core's.
 
-#ifndef WEBSRT_SRT_SESSION_SUBSCRIBER_H
-#define WEBSRT_SRT_SESSION_SUBSCRIBER_H
+#ifndef QUICSRT_SRT_SESSION_SUBSCRIBER_H
+#define QUICSRT_SRT_SESSION_SUBSCRIBER_H
 
 #include <atomic>
 #include <string>
@@ -31,7 +31,7 @@
 // The fork's gated API (build with SRT_ENABLE_VIRTUAL_TRANSPORT defined).
 #include "srt.h"
 
-namespace websrt
+namespace quicsrt
 {
 
 using SubscriberSessionParams = ReceiverCoreParams;
@@ -41,7 +41,7 @@ class SubscriberSession final : public WTClientListener
 public:
     // Read outcomes; positive values carry the delivered byte count, so
     // Read() returns plain int and these are its documented constants.
-    // They mirror the public Subscriber's values (include/websrt/subscriber.hpp).
+    // They mirror the public Subscriber's values (include/quicsrt/subscriber.hpp).
     enum ReadResult
     {
         kReadEnd        = 0,  // stream ended (graceful); sticky afterwards
@@ -120,6 +120,6 @@ private:
     std::atomic<bool> wt_ready_{false};
 };
 
-} // namespace websrt
+} // namespace quicsrt
 
-#endif // WEBSRT_SRT_SESSION_SUBSCRIBER_H
+#endif // QUICSRT_SRT_SESSION_SUBSCRIBER_H

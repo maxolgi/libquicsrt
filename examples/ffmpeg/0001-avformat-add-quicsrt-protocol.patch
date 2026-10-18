@@ -1,14 +1,14 @@
 From bd6c9e8c90fea54369f56bdef9b26bcdea481cfb Mon Sep 17 00:00:00 2001
 From: maxolgi <maxolgi@users.noreply.github.com>
 Date: Sat, 17 Oct 2026 22:47:57 -0400
-Subject: [PATCH] avformat: add websrt:// protocol (WebSRT via libwebsrt)
+Subject: [PATCH] avformat: add quicsrt:// protocol (QuicSRT via libquicsrt)
 
-Publish (output) or subscribe (input) to a WebSRT gateway - SRT over
-WebTransport - through libwebsrt's C ABI. Direction decides semantics:
+Publish (output) or subscribe (input) to a QuicSRT gateway - SRT over
+WebTransport - through libquicsrt's C ABI. Direction decides semantics:
 an output publishes ?stream=NAME, an input subscribes to it, so the
 same URL works verbatim on both sides.
 
-URL: websrt://host:port?stream=NAME[&cert_hash=HEX][&cert_hash_file=PATH][&pki=1][&latency_ms=N]
+URL: quicsrt://host:port?stream=NAME[&cert_hash=HEX][&cert_hash_file=PATH][&pki=1][&latency_ms=N]
 
 cert_hash pins the gateway certificate (SHA-256 of the DER, 64 hex
 chars) the way browsers pin self-signed WebTransport servers;
@@ -34,9 +34,9 @@ Signed-off-by: maxolgi <maxolgi@users.noreply.github.com>
  doc/protocols.texi        |  34 ++
  libavformat/Makefile      |   1 +
  libavformat/protocols.c   |   1 +
- libavformat/websrtproto.c | 690 ++++++++++++++++++++++++++++++++++++++
+ libavformat/quicsrtproto.c | 690 ++++++++++++++++++++++++++++++++++++++
  5 files changed, 731 insertions(+)
- create mode 100644 libavformat/websrtproto.c
+ create mode 100644 libavformat/quicsrtproto.c
 
 diff --git a/configure b/configure
 index c97ddb18..c259d530 100755
@@ -46,7 +46,7 @@ index c97ddb18..c259d530 100755
    --enable-libvpx          enable VP8 and VP9 de/encoding via libvpx [no]
    --enable-libvvenc        enable H.266/VVC encoding via vvenc [no]
    --enable-libwebp         enable WebP encoding via libwebp [no]
-+  --enable-libwebsrt       enable WebSRT (SRT over WebTransport) via libwebsrt [no]
++  --enable-libquicsrt       enable QuicSRT (SRT over WebTransport) via libquicsrt [no]
    --enable-libx264         enable H.264 encoding via x264 [no]
    --enable-libx265         enable HEVC encoding via x265 [no]
    --enable-libxeve         enable EVC encoding via libxeve [no]
@@ -54,7 +54,7 @@ index c97ddb18..c259d530 100755
      libvpx
      libvvenc
      libwebp
-+    libwebsrt
++    libquicsrt
      libxevd
      libxevdb
      libxeve
@@ -62,8 +62,8 @@ index c97ddb18..c259d530 100755
  libsmbclient_protocol_deps="libsmbclient gplv3"
  libsrt_protocol_deps="libsrt"
  libsrt_protocol_select="network"
-+websrt_protocol_deps="libwebsrt"
-+websrt_protocol_select="network"
++quicsrt_protocol_deps="libquicsrt"
++quicsrt_protocol_select="network"
  libssh_protocol_deps="libssh"
  libtls_conflict="openssl gnutls mbedtls"
  libzmq_protocol_deps="libzmq"
@@ -71,7 +71,7 @@ index c97ddb18..c259d530 100755
  enabled libwebp           && {
      enabled libwebp_encoder      && require_pkg_config libwebp "libwebp >= 0.2.0" webp/encode.h WebPGetEncoderVersion
      enabled libwebp_anim_encoder && check_pkg_config libwebp_anim_encoder "libwebpmux >= 0.4.0" webp/mux.h WebPAnimEncoderOptionsInit; }
-+enabled libwebsrt         && require_pkg_config libwebsrt "websrt >= 0.1.0" websrt/websrt_c.h websrt_publisher_create
++enabled libquicsrt         && require_pkg_config libquicsrt "quicsrt >= 0.1.0" quicsrt/quicsrt_c.h quicsrt_publisher_create
  enabled libx264           && require_pkg_config libx264 x264 "stdint.h x264.h" x264_encoder_encode &&
                               require_cpp_condition libx264 x264.h "X264_BUILD >= 155" && {
                               [ "$toolchain" != "msvc" ] ||
@@ -83,19 +83,19 @@ index 7812d154..2b2a2847 100644
  @code{max_packet_size}. Ignored for SOCK_STREAM. Default is @code{0}.
  @end table
  
-+@section websrt
++@section quicsrt
 +
-+WebSRT - Haivision Secure Reliable Transport over WebTransport - via the
-+libwebsrt library. An output publishes the stream name toward the gateway,
++QuicSRT - Haivision Secure Reliable Transport over WebTransport - via the
++libquicsrt library. An output publishes the stream name toward the gateway,
 +an input subscribes to it, so the same URL works verbatim on both sides.
 +The protocol carries MPEG-TS bytes, framed by the library into 188-aligned
 +SRT live messages of at most 1128 bytes. Stalled reads and writes fail
 +after the generic @option{rw_timeout} when set (defaults: 15 s for a
 +dataless read, 30 s for a backpressured write).
 +
-+The required syntax for a WebSRT URL is:
++The required syntax for a QuicSRT URL is:
 +@example
-+websrt://@var{hostname}:@var{port}[?@var{options}]
++quicsrt://@var{hostname}:@var{port}[?@var{options}]
 +@end example
 +
 +The following parameters can be set via command line options
@@ -128,7 +128,7 @@ index 02fb2b92..cbddd2c6 100644
  OBJS-$(CONFIG_TCP_PROTOCOL)              += tcp.o
  OBJS-$(CONFIG_IPFS_GATEWAY_PROTOCOL)     += ipfsgateway.o
  OBJS-$(CONFIG_IPNS_GATEWAY_PROTOCOL)     += ipfsgateway.o
-+OBJS-$(CONFIG_WEBSRT_PROTOCOL)          += websrtproto.o
++OBJS-$(CONFIG_QUICSRT_PROTOCOL)          += quicsrtproto.o
  TLS-OBJS-$(CONFIG_GNUTLS)                += tls_gnutls.o
  TLS-OBJS-$(CONFIG_LIBTLS)                += tls_libtls.o
  TLS-OBJS-$(CONFIG_MBEDTLS)               += tls_mbedtls.o
@@ -140,15 +140,15 @@ index aea09da4..ba1ceb95 100644
  extern const URLProtocol ff_udp_protocol;
  extern const URLProtocol ff_udplite_protocol;
  extern const URLProtocol ff_unix_protocol;
-+extern const URLProtocol ff_websrt_protocol;
++extern const URLProtocol ff_quicsrt_protocol;
  extern const URLProtocol ff_libamqp_protocol;
  extern const URLProtocol ff_libcurl_protocol;
  extern const URLProtocol ff_librist_protocol;
-diff --git a/libavformat/websrtproto.c b/libavformat/websrtproto.c
+diff --git a/libavformat/quicsrtproto.c b/libavformat/quicsrtproto.c
 new file mode 100644
 index 00000000..664d97c7
 --- /dev/null
-+++ b/libavformat/websrtproto.c
++++ b/libavformat/quicsrtproto.c
 @@ -0,0 +1,690 @@
 +/*
 + * This file is part of FFmpeg.
@@ -170,9 +170,9 @@ index 00000000..664d97c7
 +
 +/**
 + * @file
-+ * WebSRT (SRT over WebTransport) protocol via libwebsrt
++ * QuicSRT (SRT over WebTransport) protocol via libquicsrt
 + *
-+ * URL syntax: websrt://host:port[?options]
++ * URL syntax: quicsrt://host:port[?options]
 + *
 + *   stream=NAME          stream name (required)
 + *   cert_hash=HEX        SHA-256 of the gateway cert DER (64 hex chars);
@@ -181,7 +181,7 @@ index 00000000..664d97c7
 + *   cert_hash_file=PATH  read the gateway's runtime cert-hash.js and use
 + *                        its window.CERT_HASH value: "<hex>" pins as
 + *                        cert_hash, null means PKI (same parser as
-+ *                        websrt-dump; a broken file fails the open)
++ *                        quicsrt-dump; a broken file fails the open)
 + *   pki=1                normal PKI validation (default when no cert
 + *                        parameter is given)
 + *   latency_ms=N         TSBPD latency floor (default 120)
@@ -197,7 +197,7 @@ index 00000000..664d97c7
 + *
 + * The protocol carries MPEG-TS bytes: the library frames them into
 + * 188-aligned SRT live messages of at most 1128 bytes (6 TS packets,
-+ * the WebSRT payload constant). Writes accept any buffer size (a
++ * the QuicSRT payload constant). Writes accept any buffer size (a
 + * partial accept resumes from data + returned); reads deliver one
 + * message at a time through an internal bounce buffer, so callers may
 + * use any buffer size >= 1 (ffmpeg's AVIO buffers are far larger than
@@ -227,39 +227,39 @@ index 00000000..664d97c7
 +#include "url.h"
 +#include "urldecode.h"
 +
-+#include "websrt/websrt_c.h"
++#include "quicsrt/quicsrt_c.h"
 +
-+/* WebSRT payload constant: 6 x 188-byte TS packets (see websrt-cpp). */
-+#define WEBSRT_PAYLOAD_SIZE 1128
++/* QuicSRT payload constant: 6 x 188-byte TS packets (see quicsrt-cpp). */
++#define QUICSRT_PAYLOAD_SIZE 1128
 +
 +/* Retry window for subscribing to a stream whose publisher has not
 + * registered the name yet (live-edge join during broadcast startup).
 + * Attempts use the library's default connect timeout (10 s) - cutting
 + * it short abandons in-flight QUIC handshakes server-side, which the
 + * local oracle punishes with longer accept stalls. */
-+#define WEBSRT_OPEN_RETRY_MS 20000
-+#define WEBSRT_OPEN_RETRY_DELAY_US 500000
++#define QUICSRT_OPEN_RETRY_MS 20000
++#define QUICSRT_OPEN_RETRY_DELAY_US 500000
 +
 +/* Default stall bounds: publisher writes block under SRT backpressure
 + * (timeout below), reads poll; both get an overall stall bound. The
 + * generic rw_timeout option (microseconds) overrides the two bounds
 + * when set. */
-+#define WEBSRT_IO_TIMEOUT_MS 1000
-+#define WEBSRT_WRITE_BUDGET_US 30000000
-+#define WEBSRT_READ_STALL_US 15000000
-+#define WEBSRT_END_TIMEOUT_MS 5000
++#define QUICSRT_IO_TIMEOUT_MS 1000
++#define QUICSRT_WRITE_BUDGET_US 30000000
++#define QUICSRT_READ_STALL_US 15000000
++#define QUICSRT_END_TIMEOUT_MS 5000
 +
 +/* Periodic stats line interval (AV_LOG_DEBUG). */
-+#define WEBSRT_STATS_INTERVAL_US 5000000
++#define QUICSRT_STATS_INTERVAL_US 5000000
 +
-+typedef struct WebSRTContext {
++typedef struct QuicSRTContext {
 +    const AVClass        *class;
-+    websrt_publisher_t  *pub;
-+    websrt_subscriber_t *sub;
++    quicsrt_publisher_t  *pub;
++    quicsrt_subscriber_t *sub;
 +    int                  is_output;
 +
 +    /* AVOption-backed parameters. Effective values after the merge in
-+     * websrt_parse_options: a URL-query parameter overrides the option
++     * quicsrt_parse_options: a URL-query parameter overrides the option
 +     * value; cert_hash holds the pinned hash (NULL = PKI) once the
 +     * optional cert_hash_file has been read. */
 +    char                *stream;
@@ -270,19 +270,19 @@ index 00000000..664d97c7
 +
 +    /* Read bounce: one SRT message at a time, served to any caller
 +     * buffer size. */
-+    uint8_t              bounce[WEBSRT_PAYLOAD_SIZE];
++    uint8_t              bounce[QUICSRT_PAYLOAD_SIZE];
 +    int                  bounce_len;
 +    int                  bounce_off;
 +
 +    int64_t              bytes_in;
 +    int64_t              bytes_out;
 +    int64_t              last_stats_us;
-+} WebSRTContext;
++} QuicSRTContext;
 +
 +#define D AV_OPT_FLAG_DECODING_PARAM
 +#define E AV_OPT_FLAG_ENCODING_PARAM
-+#define OFFSET(x) offsetof(WebSRTContext, x)
-+static const AVOption websrt_options[] = {
++#define OFFSET(x) offsetof(QuicSRTContext, x)
++static const AVOption quicsrt_options[] = {
 +    { "stream",         "Stream name to publish (output) or subscribe to (input)",   OFFSET(stream),          AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0,        .flags = D|E },
 +    { "cert_hash",      "SHA-256 of the gateway cert DER (64 hex chars) to pin",     OFFSET(cert_hash),       AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0,        .flags = D|E },
 +    { "cert_hash_file", "cert-hash.js to read the pin (or PKI) from at open",        OFFSET(cert_hash_file),  AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0,        .flags = D|E },
@@ -291,14 +291,14 @@ index 00000000..664d97c7
 +    { NULL }
 +};
 +
-+static const AVClass websrt_class = {
-+    .class_name = "websrt",
++static const AVClass quicsrt_class = {
++    .class_name = "quicsrt",
 +    .item_name  = av_default_item_name,
-+    .option     = websrt_options,
++    .option     = quicsrt_options,
 +    .version    = LIBAVUTIL_VERSION_INT,
 +};
 +
-+static int websrt_is_hex_64(const char *s)
++static int quicsrt_is_hex_64(const char *s)
 +{
 +    int i;
 +    for (i = 0; i < 64; i++) {
@@ -310,10 +310,10 @@ index 00000000..664d97c7
 +
 +/* The gateway writes `window.CERT_HASH = "<64 hex>";` (self-signed mode)
 + * or `window.CERT_HASH = null;` (PKI mode) into cert-hash.js. Ported from
-+ * websrt-dump's parser - strict, so a broken file fails the open instead
++ * quicsrt-dump's parser - strict, so a broken file fails the open instead
 + * of the stream. On success hex_out holds the 64-char hash, or "" when
 + * the file selects PKI. */
-+static int websrt_read_cert_hash_js(URLContext *h, const char *path,
++static int quicsrt_read_cert_hash_js(URLContext *h, const char *path,
 +                                    char *hex_out)
 +{
 +    char buf[4096];
@@ -383,7 +383,7 @@ index 00000000..664d97c7
 +        }
 +        memcpy(hex_out, js + i + 1, 64);
 +        hex_out[64] = '\0';
-+        if (!websrt_is_hex_64(hex_out)) {
++        if (!quicsrt_is_hex_64(hex_out)) {
 +            av_log(h, AV_LOG_ERROR, "cert_hash_file: CERT_HASH value is not 64 hex characters\n");
 +            ret = AVERROR(EINVAL);
 +            goto out;
@@ -401,7 +401,7 @@ index 00000000..664d97c7
 + * file or stream. '+' decodes to ' ', matching how query parameter
 + * values are decoded throughout (decode_plus_sign = 1, as in
 + * ff_parse_opts_from_query_string in utils.c). */
-+static int websrt_decode_param(URLContext *h, const char *value,
++static int quicsrt_decode_param(URLContext *h, const char *value,
 +                               const char *param, char **out)
 +{
 +    const char *q;
@@ -420,9 +420,9 @@ index 00000000..664d97c7
 +    return 0;
 +}
 +
-+static int websrt_parse_options(URLContext *h, const char *uri,
++static int quicsrt_parse_options(URLContext *h, const char *uri,
 +                                char *host, int host_size, int *port,
-+                                WebSRTContext *s)
++                                QuicSRTContext *s)
 +{
 +    const char *cert_mode[3];
 +    const char *p;
@@ -438,7 +438,7 @@ index 00000000..664d97c7
 +        return AVERROR(EINVAL);
 +    }
 +    if (*port < 0)
-+        *port = 443; /* the WebSRT gateway default */
++        *port = 443; /* the QuicSRT gateway default */
 +
 +    /* Merge rule (http.c convention, cf. ff_parse_opts_from_query_string
 +     * in udp.c/tcp.c: dict options are applied first, URL parameters
@@ -453,7 +453,7 @@ index 00000000..664d97c7
 +    if (p) {
 +        if (av_find_info_tag(buf, sizeof(buf), "stream", p)) {
 +            char *val;
-+            ret = websrt_decode_param(h, buf, "stream", &val);
++            ret = quicsrt_decode_param(h, buf, "stream", &val);
 +            if (ret < 0)
 +                return ret;
 +            av_freep(&s->stream);
@@ -461,10 +461,10 @@ index 00000000..664d97c7
 +        }
 +        if (av_find_info_tag(buf, sizeof(buf), "cert_hash", p)) {
 +            char *val;
-+            ret = websrt_decode_param(h, buf, "cert_hash", &val);
++            ret = quicsrt_decode_param(h, buf, "cert_hash", &val);
 +            if (ret < 0)
 +                return ret;
-+            if (!websrt_is_hex_64(val)) {
++            if (!quicsrt_is_hex_64(val)) {
 +                av_log(h, AV_LOG_ERROR, "cert_hash must be 64 hex characters\n");
 +                av_free(val);
 +                return AVERROR(EINVAL);
@@ -475,7 +475,7 @@ index 00000000..664d97c7
 +        }
 +        if (av_find_info_tag(buf, sizeof(buf), "cert_hash_file", p)) {
 +            char *val;
-+            ret = websrt_decode_param(h, buf, "cert_hash_file", &val);
++            ret = quicsrt_decode_param(h, buf, "cert_hash_file", &val);
 +            if (ret < 0)
 +                return ret;
 +            av_freep(&s->cert_hash_file);
@@ -524,14 +524,14 @@ index 00000000..664d97c7
 +    }
 +
 +    if (s->cert_hash && !url_cert_hash &&
-+        !websrt_is_hex_64(s->cert_hash)) {
++        !quicsrt_is_hex_64(s->cert_hash)) {
 +        av_log(h, AV_LOG_ERROR, "cert_hash must be 64 hex characters\n");
 +        return AVERROR(EINVAL);
 +    }
 +    if (s->cert_hash_file) {
 +        /* cert_hash is NULL here: the exclusion above ran first. An
 +         * empty result means the file selects PKI. */
-+        ret = websrt_read_cert_hash_js(h, s->cert_hash_file, hash);
++        ret = quicsrt_read_cert_hash_js(h, s->cert_hash_file, hash);
 +        if (ret < 0)
 +            return ret;
 +        if (hash[0]) {
@@ -548,35 +548,35 @@ index 00000000..664d97c7
 +    return 0;
 +}
 +
-+static void websrt_log_stats(URLContext *h, WebSRTContext *s, int force)
++static void quicsrt_log_stats(URLContext *h, QuicSRTContext *s, int force)
 +{
 +    int64_t now = av_gettime();
 +    char stats[512];
 +
-+    if (!force && now - s->last_stats_us < WEBSRT_STATS_INTERVAL_US)
++    if (!force && now - s->last_stats_us < QUICSRT_STATS_INTERVAL_US)
 +        return;
 +    s->last_stats_us = now;
 +
 +    if (s->is_output) {
-+        if (websrt_publisher_stats(s->pub, stats, sizeof(stats)) == WEBSRT_OK)
++        if (quicsrt_publisher_stats(s->pub, stats, sizeof(stats)) == QUICSRT_OK)
 +            av_log(h, AV_LOG_DEBUG, "stats: %s\n", stats);
 +    } else {
-+        if (websrt_subscriber_stats(s->sub, stats, sizeof(stats)) == WEBSRT_OK)
++        if (quicsrt_subscriber_stats(s->sub, stats, sizeof(stats)) == QUICSRT_OK)
 +            av_log(h, AV_LOG_DEBUG, "stats: %s\n", stats);
 +    }
 +}
 +
-+static int websrt_open(URLContext *h, const char *uri, int flags)
++static int quicsrt_open(URLContext *h, const char *uri, int flags)
 +{
-+    WebSRTContext *s = h->priv_data;
++    QuicSRTContext *s = h->priv_data;
 +    char host[1024];
 +    int port, ret;
-+    websrt_status_t st;
++    quicsrt_status_t st;
 +
 +    h->is_streamed = 1;
 +    s->is_output   = (flags & AVIO_FLAG_WRITE) != 0;
 +
-+    ret = websrt_parse_options(h, uri, host, sizeof(host), &port, s);
++    ret = quicsrt_parse_options(h, uri, host, sizeof(host), &port, s);
 +    if (ret < 0)
 +        return ret;
 +
@@ -586,21 +586,21 @@ index 00000000..664d97c7
 +         * loop can starve transiently under churn (self-healing). */
 +        int attempt;
 +        for (attempt = 0;; attempt++) {
-+            s->pub = websrt_publisher_create();
++            s->pub = quicsrt_publisher_create();
 +            if (!s->pub) {
 +                ret = AVERROR(ENOMEM);
 +                goto fail;
 +            }
-+            st = websrt_publisher_start(s->pub, host, port, s->stream,
++            st = quicsrt_publisher_start(s->pub, host, port, s->stream,
 +                                        s->cert_hash,
 +                                        s->latency_ms, 0);
-+            if (st == WEBSRT_OK)
++            if (st == QUICSRT_OK)
 +                break;
-+            if ((st == WEBSRT_ETIMEOUT || st == WEBSRT_ECONNECT) && attempt == 0) {
++            if ((st == QUICSRT_ETIMEOUT || st == QUICSRT_ECONNECT) && attempt == 0) {
 +                int slept;
 +                av_log(h, AV_LOG_WARNING, "publish start stalled (%s); retrying in 3 s\n",
-+                       websrt_publisher_last_error(s->pub));
-+                websrt_publisher_destroy(s->pub);
++                       quicsrt_publisher_last_error(s->pub));
++                quicsrt_publisher_destroy(s->pub);
 +                s->pub = NULL;
 +                /* Chunked so an interrupt stays responsive. */
 +                for (slept = 0; slept < 3000000; slept += 100000) {
@@ -612,16 +612,16 @@ index 00000000..664d97c7
 +                }
 +                continue;
 +            }
-+            if (st == WEBSRT_EREJECTED) {
++            if (st == QUICSRT_EREJECTED) {
 +                av_log(h, AV_LOG_ERROR, "stream name in use: '%s' is held by a live source\n", s->stream);
 +                ret = AVERROR(EADDRINUSE);
-+            } else if (st == WEBSRT_ETIMEOUT) {
++            } else if (st == QUICSRT_ETIMEOUT) {
 +                ret = AVERROR(ETIMEDOUT);
 +            } else {
 +                ret = AVERROR(EIO);
 +            }
 +            av_log(h, AV_LOG_ERROR, "publish start failed: %s\n",
-+                   websrt_publisher_last_error(s->pub));
++                   quicsrt_publisher_last_error(s->pub));
 +            goto fail;
 +        }
 +        av_log(h, AV_LOG_INFO, "publishing '%s' to %s:%d (%s)\n",
@@ -631,28 +631,28 @@ index 00000000..664d97c7
 +         * live-edge join during broadcast startup succeeds, and ride
 +         * out transient transport stalls the same way - but a stream
 +         * that never appears fails within the retry window. */
-+        int64_t deadline = av_gettime() + WEBSRT_OPEN_RETRY_MS * 1000LL;
++        int64_t deadline = av_gettime() + QUICSRT_OPEN_RETRY_MS * 1000LL;
 +        for (;;) {
 +            if (ff_check_interrupt(&h->interrupt_callback)) {
 +                ret = AVERROR_EXIT;
 +                goto fail;
 +            }
-+            s->sub = websrt_subscriber_create();
++            s->sub = quicsrt_subscriber_create();
 +            if (!s->sub) {
 +                ret = AVERROR(ENOMEM);
 +                goto fail;
 +            }
-+            st = websrt_subscriber_start(s->sub, host, port, s->stream,
++            st = quicsrt_subscriber_start(s->sub, host, port, s->stream,
 +                                         s->cert_hash,
 +                                         s->latency_ms, 0);
-+            if (st == WEBSRT_OK)
++            if (st == QUICSRT_OK)
 +                break;
-+            if (st == WEBSRT_EREJECTED || st == WEBSRT_ETIMEOUT || st == WEBSRT_ECONNECT) {
-+                websrt_subscriber_destroy(s->sub);
++            if (st == QUICSRT_EREJECTED || st == QUICSRT_ETIMEOUT || st == QUICSRT_ECONNECT) {
++                quicsrt_subscriber_destroy(s->sub);
 +                s->sub = NULL;
 +                if (av_gettime() >= deadline) {
 +                    av_log(h, AV_LOG_ERROR, "stream '%s' not available: %s\n",
-+                           s->stream, st == WEBSRT_EREJECTED
++                           s->stream, st == QUICSRT_EREJECTED
 +                                      ? "no publisher (HTTP 404)" : "gateway unreachable");
 +                    ret = AVERROR(ECONNREFUSED);
 +                    goto fail;
@@ -661,12 +661,12 @@ index 00000000..664d97c7
 +                    ret = AVERROR_EXIT;
 +                    goto fail;
 +                }
-+                av_usleep(WEBSRT_OPEN_RETRY_DELAY_US);
++                av_usleep(QUICSRT_OPEN_RETRY_DELAY_US);
 +                continue;
 +            }
 +            av_log(h, AV_LOG_ERROR, "subscribe start failed: %s\n",
-+                   websrt_subscriber_last_error(s->sub));
-+            ret = st == WEBSRT_ETIMEOUT ? AVERROR(ETIMEDOUT) : AVERROR(EIO);
++                   quicsrt_subscriber_last_error(s->sub));
++            ret = st == QUICSRT_ETIMEOUT ? AVERROR(ETIMEDOUT) : AVERROR(EIO);
 +            goto fail;
 +        }
 +        av_log(h, AV_LOG_INFO, "subscribed to '%s' at %s:%d (%s)\n",
@@ -677,21 +677,21 @@ index 00000000..664d97c7
 +
 +fail:
 +    if (s->pub) {
-+        websrt_publisher_destroy(s->pub);
++        quicsrt_publisher_destroy(s->pub);
 +        s->pub = NULL;
 +    }
 +    if (s->sub) {
-+        websrt_subscriber_destroy(s->sub);
++        quicsrt_subscriber_destroy(s->sub);
 +        s->sub = NULL;
 +    }
 +    return ret;
 +}
 +
-+static int websrt_read(URLContext *h, uint8_t *buf, int size)
++static int quicsrt_read(URLContext *h, uint8_t *buf, int size)
 +{
-+    WebSRTContext *s = h->priv_data;
++    QuicSRTContext *s = h->priv_data;
 +    int64_t stall_us = h->rw_timeout > 0 ? h->rw_timeout
-+                                         : WEBSRT_READ_STALL_US;
++                                         : QUICSRT_READ_STALL_US;
 +    int64_t stall_deadline = av_gettime() + stall_us;
 +
 +    /* Serve a short read from the bounce buffer first. */
@@ -702,7 +702,7 @@ index 00000000..664d97c7
 +        if (s->bounce_off == s->bounce_len)
 +            s->bounce_off = s->bounce_len = 0;
 +        s->bytes_in += n;
-+        websrt_log_stats(h, s, 0);
++        quicsrt_log_stats(h, s, 0);
 +        return n;
 +    }
 +
@@ -715,9 +715,9 @@ index 00000000..664d97c7
 +        /* Bound each poll by the remaining stall budget so a small
 +         * rw_timeout is not overshot by the 1 s poll granularity. */
 +        left_us    = stall_deadline - av_gettime();
-+        timeout_ms = (int)FFMIN(WEBSRT_IO_TIMEOUT_MS, left_us / 1000);
++        timeout_ms = (int)FFMIN(QUICSRT_IO_TIMEOUT_MS, left_us / 1000);
 +        timeout_ms = FFMAX(timeout_ms, 1);
-+        n = websrt_subscriber_read(s->sub, s->bounce, sizeof(s->bounce),
++        n = quicsrt_subscriber_read(s->sub, s->bounce, sizeof(s->bounce),
 +                                   timeout_ms);
 +        if (n > 0) {
 +            int m = FFMIN(size, n);
@@ -725,38 +725,38 @@ index 00000000..664d97c7
 +            s->bounce_len = n;
 +            s->bounce_off = m;
 +            s->bytes_in  += m;
-+            websrt_log_stats(h, s, 0);
++            quicsrt_log_stats(h, s, 0);
 +            return m;
 +        }
 +        switch (n) {
-+        case WEBSRT_READ_TIMEOUT:
++        case QUICSRT_READ_TIMEOUT:
 +            if (av_gettime() >= stall_deadline) {
 +                av_log(h, AV_LOG_ERROR, "no data for %d ms\n",
 +                       (int)(stall_us / 1000));
 +                return AVERROR(ETIMEDOUT);
 +            }
 +            continue;
-+        case WEBSRT_READ_END:
++        case QUICSRT_READ_END:
 +            return AVERROR_EOF;
-+        case WEBSRT_READ_CLOSED:
++        case QUICSRT_READ_CLOSED:
 +            av_log(h, AV_LOG_ERROR, "session closed: %s\n",
-+                   websrt_subscriber_last_error(s->sub));
++                   quicsrt_subscriber_last_error(s->sub));
 +            return AVERROR(ECONNRESET);
 +        default:
 +            av_log(h, AV_LOG_ERROR, "read failed: %s\n",
-+                   websrt_subscriber_last_error(s->sub));
++                   quicsrt_subscriber_last_error(s->sub));
 +            return AVERROR(EIO);
 +        }
 +    }
 +}
 +
-+static int websrt_write(URLContext *h, const uint8_t *buf, int size)
++static int quicsrt_write(URLContext *h, const uint8_t *buf, int size)
 +{
-+    WebSRTContext *s = h->priv_data;
++    QuicSRTContext *s = h->priv_data;
 +    const uint8_t *data = buf;
 +    int left = size;
 +    int64_t budget_us = h->rw_timeout > 0 ? h->rw_timeout
-+                                          : WEBSRT_WRITE_BUDGET_US;
++                                          : QUICSRT_WRITE_BUDGET_US;
 +    int64_t budget_deadline = av_gettime() + budget_us;
 +
 +    while (left > 0) {
@@ -768,60 +768,60 @@ index 00000000..664d97c7
 +        /* Bound each write attempt by the remaining budget so a small
 +         * rw_timeout is not overshot by the 1 s granularity. */
 +        left_us    = budget_deadline - av_gettime();
-+        timeout_ms = (int)FFMIN(WEBSRT_IO_TIMEOUT_MS, left_us / 1000);
++        timeout_ms = (int)FFMIN(QUICSRT_IO_TIMEOUT_MS, left_us / 1000);
 +        timeout_ms = FFMAX(timeout_ms, 1);
-+        n = websrt_publisher_write(s->pub, data, left, timeout_ms);
++        n = quicsrt_publisher_write(s->pub, data, left, timeout_ms);
 +        if (n > 0) {
 +            /* Partial accept: resume from data + returned. */
 +            data += n;
 +            left -= n;
 +            s->bytes_out += n;
-+            websrt_log_stats(h, s, 0);
++            quicsrt_log_stats(h, s, 0);
 +            continue;
 +        }
 +        switch (n) {
-+        case WEBSRT_WRITE_TIMEOUT:
++        case QUICSRT_WRITE_TIMEOUT:
 +            if (av_gettime() >= budget_deadline) {
 +                av_log(h, AV_LOG_ERROR, "write stalled for %d ms (backpressure)\n",
 +                       (int)(budget_us / 1000));
 +                return AVERROR(ETIMEDOUT);
 +            }
 +            continue;
-+        case WEBSRT_WRITE_CLOSED:
++        case QUICSRT_WRITE_CLOSED:
 +            av_log(h, AV_LOG_ERROR, "session closed: %s\n",
-+                   websrt_publisher_last_error(s->pub));
++                   quicsrt_publisher_last_error(s->pub));
 +            return AVERROR(EPIPE);
 +        default:
 +            av_log(h, AV_LOG_ERROR, "write failed: %s\n",
-+                   websrt_publisher_last_error(s->pub));
++                   quicsrt_publisher_last_error(s->pub));
 +            return AVERROR(EIO);
 +        }
 +    }
 +    return size;
 +}
 +
-+static int websrt_close(URLContext *h)
++static int quicsrt_close(URLContext *h)
 +{
-+    WebSRTContext *s = h->priv_data;
++    QuicSRTContext *s = h->priv_data;
 +
 +    if (s->pub) {
-+        websrt_status_t st = websrt_publisher_end(s->pub, WEBSRT_END_TIMEOUT_MS);
-+        if (st != WEBSRT_OK) {
++        quicsrt_status_t st = quicsrt_publisher_end(s->pub, QUICSRT_END_TIMEOUT_MS);
++        if (st != QUICSRT_OK) {
 +            av_log(h, AV_LOG_WARNING, "graceful end failed (%s); dropping tail\n",
-+                   websrt_publisher_last_error(s->pub));
-+            websrt_publisher_stop(s->pub);
++                   quicsrt_publisher_last_error(s->pub));
++            quicsrt_publisher_stop(s->pub);
 +        }
-+        websrt_log_stats(h, s, 1);
++        quicsrt_log_stats(h, s, 1);
 +        av_log(h, AV_LOG_INFO, "stopped publishing: %lld bytes written\n",
 +               (long long)s->bytes_out);
-+        websrt_publisher_destroy(s->pub);
++        quicsrt_publisher_destroy(s->pub);
 +        s->pub = NULL;
 +    }
 +    if (s->sub) {
-+        websrt_log_stats(h, s, 1);
++        quicsrt_log_stats(h, s, 1);
 +        av_log(h, AV_LOG_INFO, "stopped subscribing: %lld bytes read\n",
 +               (long long)s->bytes_in);
-+        websrt_subscriber_destroy(s->sub);
++        quicsrt_subscriber_destroy(s->sub);
 +        s->sub = NULL;
 +    }
 +    av_freep(&s->stream);
@@ -830,15 +830,15 @@ index 00000000..664d97c7
 +    return 0;
 +}
 +
-+const URLProtocol ff_websrt_protocol = {
-+    .name                = "websrt",
-+    .url_open            = websrt_open,
-+    .url_read            = websrt_read,
-+    .url_write           = websrt_write,
-+    .url_close           = websrt_close,
-+    .priv_data_size      = sizeof(WebSRTContext),
++const URLProtocol ff_quicsrt_protocol = {
++    .name                = "quicsrt",
++    .url_open            = quicsrt_open,
++    .url_read            = quicsrt_read,
++    .url_write           = quicsrt_write,
++    .url_close           = quicsrt_close,
++    .priv_data_size      = sizeof(QuicSRTContext),
 +    .flags               = URL_PROTOCOL_FLAG_NETWORK,
-+    .priv_data_class     = &websrt_class,
++    .priv_data_class     = &quicsrt_class,
 +};
 -- 
 2.47.3

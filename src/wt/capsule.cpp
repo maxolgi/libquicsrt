@@ -1,6 +1,6 @@
 #include "wt/capsule.h"
 
-namespace websrt
+namespace quicsrt
 {
 
 std::size_t VarintPut(std::uint8_t* dst, std::uint64_t v)
@@ -112,4 +112,4 @@ std::size_t WtCapsuleParser::pending() const
     return buf_.size();
 }
 
-} // namespace websrt
+} // namespace quicsrt
