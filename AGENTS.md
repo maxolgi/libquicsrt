@@ -25,8 +25,7 @@ FFmpeg's `websrt://` protocol, talking to any WebSRT gateway.
 
 Live testing uses the supervised `websrt-cpp` gateway (test stream
 `browsertest` from `websrt-cpp-testpub`). WT 127.0.0.1:4435, health
-http://127.0.0.1:9292, logs
-`/var/log/websrt-cpp/`. Cert pin: `curl -k
+http://127.0.0.1:9292, logs `/var/log/websrt-cpp/`. Cert pin: `curl -k
 https://127.0.0.1:8443/cert-hash.js`.
 
 ## Dependencies (deps/)
