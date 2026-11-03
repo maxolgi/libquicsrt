@@ -128,6 +128,7 @@ if(QUICSRT_BUILD_SHARED)
         src/core/event_loop.cpp
         src/core/version.cpp
         src/srt_session/receiver_core.cpp
+        src/srt_session/negotiate.cpp
         src/wt/capsule.cpp
         src/wt/connect_response.cpp)
     set_target_properties(quicsrt PROPERTIES
@@ -142,6 +143,10 @@ else()
         src/core/event_loop.cpp
         src/core/version.cpp
         src/srt_session/receiver_core.cpp
+        # receiver_core.cpp's AcceptThread readback needs it; part of the
+        # base so the WT-off fast path links too (it is NOT pulled in by
+        # the receiver-only flavor, which lists it separately).
+        src/srt_session/negotiate.cpp
         src/wt/capsule.cpp
         src/wt/connect_response.cpp)
 endif()
@@ -201,7 +206,6 @@ if(QUICSRT_ENABLE_WT)
         src/wt/client.cpp
         src/srt_session/subscriber.cpp
         src/srt_session/publisher.cpp
-        src/srt_session/negotiate.cpp
         src/quicsrt/config.cpp
         src/quicsrt/resolve.cpp
         deps/srt/apps/apputil.cpp
