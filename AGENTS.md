@@ -33,7 +33,13 @@ https://127.0.0.1:8443/cert-hash.js`.
 - `deps/srt` — submodule: the fork `maxolgi/srt`, branch `quicsrt`
   (virtual transport instead of OS sockets, no built-in crypto). Bumps
   are normal commits: "Bump deps/srt to <sha>: ...".
-- `deps/lsquic` — submodule (fetches ls-qpack/ls-hpack recursively).
+- `deps/lsquic` — submodule: the fork `maxolgi/lsquic`, branch `quicsrt`
+  (upstream master + carried patches; currently: advertise draft-07+
+  SETTINGS_WEBTRANSPORT_MAX_SESSIONS 0xc671706a so strict clients like
+  Safari connect). Bumps follow upstream master head: ff, rebase the
+  patch commits, bump as "Bump deps/lsquic to <sha>: ...". Upstream's
+  WT rewrite (lsquic PR #629, new lsquic_wt.h API) is the eventual
+  migration target that would drop the carried patch.
 - `deps/boringssl` and `deps/ffmpeg` — fetched at pinned commits by
   `build.sh`, gitignored. Never commit anything under them, and never
   commit `cert-hash.js` (runtime artifact).
