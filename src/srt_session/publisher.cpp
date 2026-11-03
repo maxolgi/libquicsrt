@@ -7,6 +7,11 @@
 
 #include "srt_session/negotiate.h"
 
+// The fork's internal C++ bind path: CUDT::bind_virtual with the
+// conclusion_first flag (the handshake form is deliberately not part of
+// the public C API).
+#include "core.h"
+
 namespace quicsrt
 {
 
@@ -105,6 +110,9 @@ PublisherSession::PublisherSession(PublisherSessionParams params)
 PublisherSession::~PublisherSession()
 {
     Finalize();
+    // Every Finalize path detaches the queue; this is the belt-and-braces
+    // idempotent backstop before the members go down.
+    vt_queue_.detach();
 }
 
 void PublisherSession::AttachClient(WTClient& client)
@@ -156,18 +164,19 @@ void PublisherSession::OnSessionClosed(const std::string& reason)
 
 void PublisherSession::OnDatagram(const std::uint8_t* data, std::size_t size)
 {
-    // Inject under the mutex: Finalize() nulls vt_ under the same mutex,
-    // which is what guarantees no injection can pass the transport release.
-    const std::lock_guard<std::mutex> lock(mutex_);
-    if (vt_ == nullptr || state_ == State::kClosed)
+    // Push without the mutex: the queue is internally synchronized, and
+    // Finalize() detaches it on the terminal transition, after which
+    // pushes simply fail - no datagram is delivered past the terminal
+    // state (the closed_ check drops the common case earlier; a push
+    // racing the detach is harmless either way).
+    if (closed_.load(std::memory_order_relaxed))
     {
         return;
     }
-    srt_virtual_transport_inject(vt_,
-                                 reinterpret_cast<const char*>(data),
-                                 static_cast<int>(size),
-                                 reinterpret_cast<const sockaddr*>(&peer_label_),
-                                 static_cast<int>(sizeof peer_label_));
+    vt_queue_.push(data,
+                   size,
+                   reinterpret_cast<const sockaddr*>(&peer_label_),
+                   sizeof peer_label_);
 }
 
 // ---- accept thread ----
@@ -234,8 +243,7 @@ int PublisherSession::VtSend(const char* data, int len)
 
 bool PublisherSession::StartListener(std::string* error)
 {
-    SRTSOCKET            listener = SRT_INVALID_SOCK;
-    SRTVirtualTransport* vt       = nullptr;
+    SRTSOCKET listener = SRT_INVALID_SOCK;
 
     const int rtt_ms = [this]
     {
@@ -265,36 +273,34 @@ bool PublisherSession::StartListener(std::string* error)
         // both directions stay latency-scaled like the browser publisher.
         ok = ok && SetOptInt(listener, SRTO_SNDBUF, buf_pkts * kBytesPerPacket);
         ok = ok && SetOptInt(listener, SRTO_RCVBUF, buf_pkts * kBytesPerPacket);
-        ok = ok && SetOptInt(listener, SRTO_SKIP_INDUCTION, 1);
-        if (rtt_ms > 0)
-        {
-            ok = ok && SetOptInt(listener, SRTO_INITIAL_RTT, rtt_ms);
-        }
         if (!ok)
         {
             *error = std::string("srt socket option: ") + srt_getlasterror_str();
             break;
         }
 
-        vt = srt_attach_virtual_transport(listener, VtSendThunk, this);
-        if (vt == nullptr)
-        {
-            *error = std::string("srt_attach_virtual_transport: ") + srt_getlasterror_str();
-            break;
-        }
-
-        // Bind the listener to a label address before listening: attached
-        // sockets get a dedicated multiplexer and dispatch never happens
-        // by address, so the label is only what srt_getsockname reports.
-        // The gateway initiates the moment the CONNECT is accepted, so
-        // the accept thread must be parked here.
+        // Bind the listener to a label address over the virtual transport
+        // before listening: the bind wires the queue's callbacks into a
+        // dedicated multiplexer, so dispatch never happens by address and
+        // the label is only what srt_getsockname reports. The conclusion-
+        // first handshake form (skip-induction) rides the fork's INTERNAL
+        // C++ bind path - deliberately not part of the public C API - and
+        // the config's initial_rtt_ms carries the seed. The gateway
+        // initiates the moment the CONNECT is accepted, so the accept
+        // thread must be parked here.
         sockaddr_in label_addr;
         std::memset(&label_addr, 0, sizeof label_addr);
         label_addr.sin_family      = AF_INET;
         label_addr.sin_addr.s_addr = inet_addr("10.213.255.254");
-        if (srt_bind(listener, (sockaddr*)&label_addr, (int)sizeof label_addr) == SRT_ERROR)
+        const SRT_VirtualTransportConfig cfg = vt_queue_.getConfig(rtt_ms);
+        if (srt::CUDT::bind_virtual(listener,
+                               (sockaddr*)&label_addr,
+                               (int)sizeof label_addr,
+                               &cfg,
+                               /*conclusion_first=*/true)
+            == SRT_ERROR)
         {
-            *error = std::string("srt_bind: ") + srt_getlasterror_str();
+            *error = std::string("bind_virtual: ") + srt_getlasterror_str();
             break;
         }
 
@@ -307,17 +313,14 @@ bool PublisherSession::StartListener(std::string* error)
 
     if (!error->empty())
     {
-        // Socket closed before the transport is released: srt_close sends
-        // the shutdown through the transport's send callback (the header's
+        // Socket closed before the queue is detached: srt_close sends
+        // the shutdown through the queue's send callback (the header's
         // teardown-order invariant).
         if (listener != SRT_INVALID_SOCK)
         {
             srt_close(listener);
         }
-        if (vt != nullptr)
-        {
-            srt_virtual_transport_release(vt);
-        }
+        vt_queue_.detach();
         return false;
     }
 
@@ -330,10 +333,8 @@ bool PublisherSession::StartListener(std::string* error)
         else
         {
             listener_ = listener;
-            vt_       = vt;
             state_    = State::kListening;
             listener  = SRT_INVALID_SOCK; // ownership moved
-            vt        = nullptr;
         }
     }
 
@@ -341,7 +342,7 @@ bool PublisherSession::StartListener(std::string* error)
     {
         // Raced a stop: undo everything just built.
         srt_close(listener);
-        srt_virtual_transport_release(vt);
+        vt_queue_.detach();
         return false;
     }
 
@@ -754,10 +755,9 @@ void PublisherSession::Finalize()
 
 void PublisherSession::Finalize(const std::string& reason, bool graceful)
 {
-    SRTSOCKET            listener           = SRT_INVALID_SOCK;
-    SRTSOCKET            accepted           = SRT_INVALID_SOCK;
-    SRTVirtualTransport* vt                 = nullptr;
-    bool                 have_accept_thread = false;
+    SRTSOCKET listener           = SRT_INVALID_SOCK;
+    SRTSOCKET accepted           = SRT_INVALID_SOCK;
+    bool      have_accept_thread = false;
 
     {
         const std::lock_guard<std::mutex> lock(mutex_);
@@ -775,7 +775,6 @@ void PublisherSession::Finalize(const std::string& reason, bool graceful)
         closed_.store(true, std::memory_order_relaxed);
         listener           = std::exchange(listener_, SRT_INVALID_SOCK);
         accepted           = std::exchange(accepted_, SRT_INVALID_SOCK);
-        vt                 = std::exchange(vt_, nullptr);
         have_accept_thread = accept_thread_.joinable();
         // No deferred drain here (the subscriber's TSBPD tail lesson does
         // not apply: a publisher receives only ACK/NAK).
@@ -786,8 +785,9 @@ void PublisherSession::Finalize(const std::string& reason, bool graceful)
     // the accepted socket). Order: accepted socket first (End may have
     // closed it already - srt_close is idempotent on a closed handle),
     // then the listener (closing it wakes a blocked srt_accept), then
-    // join, then release the transport handle - both closes may send the
-    // shutdown through the send callback, so the transport outlives them.
+    // join, then detach the queue - both closes may send the shutdown
+    // through the queue's send callback, so the queue must stay attached
+    // across them.
     if (accepted != SRT_INVALID_SOCK)
     {
         srt_close(accepted);
@@ -800,10 +800,7 @@ void PublisherSession::Finalize(const std::string& reason, bool graceful)
     {
         accept_thread_.join();
     }
-    if (vt != nullptr)
-    {
-        srt_virtual_transport_release(vt);
-    }
+    vt_queue_.detach();
 }
 
 bool PublisherSession::IsClosed() const

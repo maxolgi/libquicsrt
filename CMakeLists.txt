@@ -31,30 +31,43 @@ add_subdirectory(deps/srt)
 option(QUICSRT_BUILD_SHARED "Build libquicsrt.so exporting only the C ABI" OFF)
 if(QUICSRT_BUILD_SHARED)
     # Objects linked into the DSO must be PIC; the fork enables it only
-    # for its own shared flavor, so set it on the object library here.
+    # for its own shared flavor, so set it on the object library and the
+    # srttransport helper here.
     set_target_properties(srt_virtual PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    set_target_properties(srttransport PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
 
 # Consumer export surface. An out-of-tree consumer (the quicsrt-gateway-cpp
 # repo does add_subdirectory(deps/libquicsrt)) links these ALIASes and
 # nothing else:
 #   quicsrt::quicsrt   - libquicsrt plus its internal headers (src/) and the
-#                      srt fork's headers/link with the
-#                      SRT_ENABLE_VIRTUAL_TRANSPORT gate, so the fork API
-#                      (srt_attach_virtual_transport, SRTO_SKIP_INDUCTION,
-#                      generated version.h) is callable directly.
-#   quicsrt::srt-deps - the srt surface alone (headers + gate + link) for
+#                      srt fork's headers/link, so the fork API
+#                      (srt_bind_virtual, SRT_VirtualTransportConfig, the
+#                      srttransport push-queue helper, generated version.h)
+#                      is callable directly.
+#   quicsrt::srt-deps - the srt surface alone (headers + link) for
 #                      consumers that drive raw forked sockets.
 #   quicsrt::wt-deps  - the lsquic + BoringSSL + zlib chain (headers +
 #                      link) for consumers hosting their own lsquic engine;
 #                      WT-on builds only.
 add_library(quicsrt_srt_deps INTERFACE)
 add_library(quicsrt::srt-deps ALIAS quicsrt_srt_deps)
+# srt.h now includes "logging_api.h" (deps/srt/logging), and the optional
+# srttransport helper (deps/srt/srttransport) implements the push-queue
+# model over the seam; the fork's CMake exposes these only through
+# directory-scoped includes, so spell them out here. The conclusion-first
+# handshake form rides the fork's internal C++ bind path (CUDT::bind_virtual
+# in srtcore/core.h), whose header chain also reaches deps/srt/common and
+# deps/srt/haicrypt.
 target_include_directories(quicsrt_srt_deps INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/deps/srt/srtcore
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/srt/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/srt/haicrypt
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/srt/logging
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/srt/srttransport
     ${CMAKE_CURRENT_BINARY_DIR}/deps/srt)
 target_compile_definitions(quicsrt_srt_deps INTERFACE SRT_ENABLE_VIRTUAL_TRANSPORT)
-target_link_libraries(quicsrt_srt_deps INTERFACE srt_static)
+target_link_libraries(quicsrt_srt_deps INTERFACE srt_static srttransport)
 
 # WebTransport support: lsquic (submodule) over BoringSSL (fetched by
 # ./build.sh setup, never committed). OFF keeps the srt-only fast path
@@ -213,8 +226,8 @@ if(QUICSRT_ENABLE_WT)
         src/quicsrt/publisher.cpp
         src/quicsrt/quicsrt_c.cpp)
     # apps/ stays private: apputil.hpp/netinet_any.h are build inputs, not
-    # consumer API. srtcore/generated/binary-dir includes and the VT gate
-    # flow from quicsrt_srt_deps.
+    # consumer API. The srt include dirs (srtcore, logging, srttransport,
+    # generated version.h) flow from quicsrt_srt_deps.
     target_include_directories(quicsrt PRIVATE deps/srt/apps)
     target_link_libraries(quicsrt PUBLIC quicsrt_wt_deps)
 endif()
@@ -270,17 +283,20 @@ endif()
 add_executable(loopback_srt tests/loopback_srt.cpp)
 target_compile_features(loopback_srt PRIVATE cxx_std_20)
 set_target_properties(loopback_srt PROPERTIES CXX_EXTENSIONS OFF)
-target_include_directories(loopback_srt PRIVATE deps/srt/srtcore ${CMAKE_CURRENT_BINARY_DIR}/deps/srt)
+target_include_directories(loopback_srt PRIVATE deps/srt/srtcore deps/srt/common
+    deps/srt/haicrypt deps/srt/logging
+    deps/srt/srttransport ${CMAKE_CURRENT_BINARY_DIR}/deps/srt)
 target_compile_definitions(loopback_srt PRIVATE SRT_ENABLE_VIRTUAL_TRANSPORT)
-target_link_libraries(loopback_srt PRIVATE quicsrt_warnings Threads::Threads srt_static)
+target_link_libraries(loopback_srt PRIVATE quicsrt_warnings Threads::Threads srt_static srttransport)
 add_test(NAME loopback_srt COMMAND loopback_srt)
 
 # ReceiverCore session coverage: the WT-free receiver half driven end to
 # end against a raw forked-srt initiator over an in-memory wire pair (the
 # M0 pattern with the core as the listener half) - here proving the
-# SRTO_INITIAL_RTT seed selection (explicit params.initial_rtt_ms override
-# vs the transport-measured RTT) via the accepted socket's pre-data msRTT
-# readback, plus the pure selection units shared with the publisher half
+# initial-RTT seed selection (SRT_VirtualTransportConfig.initial_rtt_ms,
+# explicit params.initial_rtt_ms override vs the transport-measured RTT)
+# via the accepted socket's pre-data msRTT readback, plus the pure
+# selection units shared with the publisher half
 # (whose socket application needs a live WebTransport session). Links
 # quicsrt: receiver_core.cpp plus the srt fork surface ride its PUBLIC
 # deps.
@@ -336,10 +352,14 @@ if(QUICSRT_ENABLE_WT)
     target_include_directories(publisher_test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         deps/srt/srtcore
+        deps/srt/common
+        deps/srt/haicrypt
+        deps/srt/logging
+        deps/srt/srttransport
         ${CMAKE_CURRENT_BINARY_DIR}/deps/srt
         deps/lsquic/include
         ${QUICSRT_BORINGSSL_DIR}/include)
-    target_link_libraries(publisher_test PRIVATE quicsrt_warnings quicsrt Threads::Threads)
+    target_link_libraries(publisher_test PRIVATE quicsrt_warnings quicsrt Threads::Threads srttransport)
     target_compile_definitions(publisher_test PRIVATE SRT_ENABLE_VIRTUAL_TRANSPORT)
     add_test(NAME publisher_test COMMAND publisher_test)
     set_tests_properties(publisher_test PROPERTIES TIMEOUT 60)

@@ -5,26 +5,31 @@
 // creates one forked-srt socket in virtual-transport mode, binds it to
 // a label address, puts it into the listening state,
 // and answers the HSv5 Conclusion-first handshake the initiator floods
-// every ~2 ms. Incoming datagrams are injected into the srt receive
-// queue with a stable fake source label; outgoing srt datagrams
-// (handshake response, ACK, NAK) ride the injected datagram-sink
-// callback to whatever transport the owner wired up (a WTClient, an
-// engine shim, ...). Zero WebTransport includes - this is the layer an
-// Emscripten build consumes directly.
+// every ~2 ms. Incoming datagrams are pushed into the srt-side queue
+// with a stable fake source label; outgoing srt datagrams (handshake
+// response, ACK, NAK) ride the sink callback to whatever transport the
+// owner wired up (a WTClient, an engine shim, ...). Zero WebTransport
+// includes - this is the layer an Emscripten build consumes directly.
 //
-// Socket options are set on the listener BEFORE srt_listen (SRTO_TRANSTYPE
-// first - it resets the latency/payload presets), and inherited by the
-// accepted socket:
+// The virtual transport is the fork's SRTTransportQueue (the push-queue
+// helper over the srt_bind_virtual callback seam): Start binds the
+// listener through the fork's INTERNAL C++ bind path with the
+// conclusion-first handshake form (skip-induction - the listener answers
+// the Conclusion handshake the initiator floods; deliberately not
+// reachable through the public C API) and initial_rtt_ms = 
+// params.initial_rtt_ms when explicitly set, else the measured RTT
+// clamped to 1..30000 ms (0 = srt's own estimator), and InjectDatagram
+// pushes into the queue.
+//
+// Socket options are set on the listener BEFORE srt_bind_virtual
+// (SRTO_TRANSTYPE first - it resets the latency/payload presets), and
+// inherited by the accepted socket:
 //   SRTO_TRANSTYPE      SRTT_LIVE
 //   SRTO_PAYLOADSIZE    params.payload_size (1128: 6 x 188 TS packets)
 //   SRTO_RCVLATENCY     params.tsbpd_latency_ms (TSBPD = max(sender, receiver))
 //   SRTO_PEERLATENCY    params.tsbpd_latency_ms
 //   SRTO_SNDBUF         snd packets * 1472 bytes (SRTO_SNDBUF is in BYTES)
 //   SRTO_RCVBUF         rcv packets * 1472 bytes
-//   SRTO_SKIP_INDUCTION 1 (listener accepts a Conclusion-first handshake)
-//   SRTO_INITIAL_RTT    params.initial_rtt_ms when explicitly set, else
-//                       the measured RTT clamped to 1..30000 ms
-//                       (skipped when 0)
 //
 // Buffer depth mirrors the browser receiver: latency-scaled packets count
 // clamp(latency_ms * 40, 8192, 320000) for both directions.
@@ -65,19 +70,22 @@
 // Lifetime rules enforced here:
 //   - Every shared field lives under mutex_; cv_ covers state transitions.
 //     Read NEVER holds the mutex while blocking in srt receive (it would
-//     starve InjectDatagram's inject); it re-checks state between bounded
+//     starve InjectDatagram's push); it re-checks state between bounded
 //     receive slices (SRTO_RCVTIMEO <= 250 ms).
-//   - InjectDatagram injects WITH the mutex held so that Finalize can
-//     guarantee no inject happens past the transport release (they
-//     serialize on mutex_ instead of racing a stale handle).
-//   - The shutdown order is: (a) state -> kClosed and vt_ -> null under
-//     mutex_ (waiters wake, injects stop); (b) OUTSIDE the mutex
-//     srt_close(accepted), srt_close(listener) (this also wakes a blocked
-//     accept), join the accept thread, then srt_virtual_transport_release.
-//     Joining outside the mutex matters: the accept thread takes the mutex
-//     on its success path. Sockets are closed before the transport is
-//     released because srt_close sends the shutdown through the send
-//     callback (the M0 loopback harness lesson).
+//   - InjectDatagram pushes into the queue WITHOUT the mutex: the queue
+//     is internally synchronized, and after Finalize detaches it the push
+//     simply fails - a stale push can no longer race the teardown (the
+//     closed_ check drops the common case earlier).
+//   - The shutdown order is: (a) state -> kClosed under mutex_ (waiters
+//     wake, pushes park); (b) OUTSIDE the mutex srt_close(accepted),
+//     srt_close(listener) (this also wakes a blocked accept), join the
+//     accept thread, then detach the queue. Joining outside the mutex
+//     matters: the accept thread takes the mutex on its success path.
+//     Sockets are closed before the queue is detached because srt_close
+//     sends the shutdown through the queue's send callback (the M0
+//     loopback harness lesson). The queue itself is a member and is
+//     destroyed only with this object, so it outlives every socket bound
+//     to it (the srt_bind_virtual contract).
 //   - After Shutdown/Finalize the object is inert; the transport owner
 //     must guarantee no callback fires past the teardown (the WebTransport
 //     adapter's WTClient outlives the session and serializes on
@@ -98,8 +106,10 @@
 
 #include "proto/constants.h"
 
-// The fork's gated API (build with SRT_ENABLE_VIRTUAL_TRANSPORT defined).
+// The fork's virtual transport: the push-queue helper over the public
+// srt_bind_virtual callback seam (built with ENABLE_VIRTUAL_TRANSPORT).
 #include "srt.h"
+#include "srttransport.h"
 
 namespace quicsrt
 {
@@ -158,18 +168,18 @@ public:
 
     // ---- driver thread (transport owner) ----
 
-    // Builds the listener (socket, options, transport attach, bind-less
-    // listen) and spawns the accept thread. measured_rtt_ms (already
-    // clamped to 1..30000, 0 = unmeasured) seeds SRTO_INITIAL_RTT
-    // unless params_.initial_rtt_ms overrides it.
+    // Builds the listener (socket, options, virtual bind, listen) and
+    // spawns the accept thread. measured_rtt_ms (already clamped to
+    // 1..30000, 0 = unmeasured) seeds the bind's initial_rtt_ms unless
+    // params_.initial_rtt_ms overrides it.
     // Returns false with *error set on a genuine setup failure (also
     // recorded as the close reason); a concurrent MarkLocalStop unwinds
     // silently and returns false with *error empty - the pending local
     // shutdown keeps its own reason.
     bool Start(int measured_rtt_ms, std::string* error);
 
-    // Injects one incoming transport datagram into the srt receive
-    // queue. No-op once the core is closed.
+    // Pushes one incoming transport datagram into the srt receive queue.
+    // No-op once the core is closed.
     void InjectDatagram(const std::uint8_t* data, std::size_t size);
 
     // Marks the end of the wire session (peer close, transport error).
@@ -228,8 +238,8 @@ private:
     static int VtSendThunk(void* opaq, const char* data, int len, const struct sockaddr* dst, int dstlen);
     int        VtSend(const char* data, int len);
 
-    // Closes a Shutdown-deferred accepted socket and releases its
-    // transport (no-op when nothing was deferred).
+    // Closes a Shutdown-deferred accepted socket and detaches the queue
+    // (no-op when nothing was deferred).
     void CompleteDeferredTeardown();
 
     // Terminal transition: records the reason, wakes waiters, tears the
@@ -262,7 +272,6 @@ private:
     std::string             close_reason_; // first reason wins
     SRTSOCKET               listener_ = SRT_INVALID_SOCK;
     SRTSOCKET               accepted_ = SRT_INVALID_SOCK;
-    SRTVirtualTransport*    vt_       = nullptr;
     std::thread             accept_thread_;
 
     // Effective payload size after the HSv5 negotiation (the accept
@@ -277,6 +286,14 @@ private:
 
     // Lock-free mirror of state_ == kClosed for the srt send callback.
     std::atomic<bool> closed_{false};
+
+    // The virtual transport of every socket this core binds: the fork's
+    // push queue (srt_bind_virtual + SRT_VirtualTransportConfig). A
+    // member, so it outlives the sockets bound with its config; declared
+    // last, so it is destroyed first - its callbacks read closed_ and
+    // the sink above, which are trivially destructible by then (and no
+    // callback can be in flight: Finalize closes the sockets first).
+    srt::SRTTransportQueue vt_queue_{&VtSendThunk, this};
 };
 
 } // namespace quicsrt

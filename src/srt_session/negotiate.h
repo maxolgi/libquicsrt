@@ -5,7 +5,9 @@
 #ifndef QUICSRT_SRT_SESSION_NEGOTIATE_H
 #define QUICSRT_SRT_SESSION_NEGOTIATE_H
 
-// The fork's gated API (build with SRT_ENABLE_VIRTUAL_TRANSPORT defined).
+// The fork's public header: the virtual-transport API (srt_bind_virtual,
+// SRT_VirtualTransportConfig) is declared unconditionally - the
+// SRT_ENABLE_VIRTUAL_TRANSPORT define only compiles the seam in.
 #include "srt.h"
 
 namespace quicsrt

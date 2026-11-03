@@ -1,11 +1,12 @@
 // receiver_core_test: the WT-free ReceiverCore driven end to end against
 // a raw forked-srt initiator over an in-memory wire pair (the M0 harness
 // pattern with the core as the listener half). Gate criteria here: the
-// SRTO_INITIAL_RTT seed selection - an explicit params.initial_rtt_ms
-// overrides the transport-measured RTT the driver passes to Start, and 0
-// keeps the measured seed. The observable is the accepted socket's
-// pre-data msRTT (the fork seeds the estimator from the option before
-// the first live ACK sample - the same readback M0 does on its caller).
+// initial-RTT seed selection (the virtual bind's initial_rtt_ms) - an
+// explicit params.initial_rtt_ms overrides the transport-measured RTT
+// the driver passes to Start, and 0 keeps the measured seed. The
+// observable is the accepted socket's pre-data msRTT (the fork seeds
+// the estimator from the bind config before the first live ACK sample -
+// the same readback M0 does on its caller).
 // The pure selection units (InitialRttSeedMs) cover the publisher half's
 // arithmetic too: its socket application needs a live WebTransport
 // session, but both halves share the one helper. Also gated: the Stop
@@ -37,6 +38,9 @@
 
 #include "proto/constants.h"
 #include "srt_session/receiver_core.h"
+
+// The fork's internal C++ bind path (conclusion_first; see core.h).
+#include "core.h"
 
 namespace
 {
@@ -87,11 +91,21 @@ void SelectionUnits()
 
 // ---- (2) session-level seed readback ----
 
+// Forward declaration: the harness owns the caller's transport queue,
+// built around this callback (defined below, where Harness is complete
+// enough to dereference).
+int CallerSend(void* opaq, const char* data, int len, const struct sockaddr* dst, int dstlen);
+
 struct Harness
 {
-    quicsrt::ReceiverCore* core           = nullptr;
-    SRTVirtualTransport*  caller_vt      = nullptr;
-    sockaddr_in           listener_label = {};
+    quicsrt::ReceiverCore* core = nullptr;
+    // The caller's virtual transport: the fork's push queue, its config
+    // binding the caller socket (so it must outlive that socket: the
+    // sockets close in TeardownWirePair before it detaches, and ~WirePair
+    // brings it down after the core). CallerSend reads core, set before
+    // any socket exists to fire it.
+    srt::SRTTransportQueue caller_queue{&CallerSend, this};
+    sockaddr_in            listener_label = {};
     // Core->caller gate for the backpressure case: datagrams still allowed
     // through CoreSink. At zero it swallows every datagram but claims
     // success (the VtSend swallow idiom - a failure return would read as
@@ -101,9 +115,9 @@ struct Harness
     std::atomic<int> gate_pass_left{1 << 30};
 };
 
-// caller -> core: the raw socket's send callback hands the datagram to
-// the core's inject (the core owns its own transport and labels the peer
-// itself).
+// caller -> core: the caller queue's send callback (wired to the raw
+// socket by its bind config) hands the datagram to the core's inject
+// (the core owns its own transport and labels the peer itself).
 int CallerSend(void* opaq, const char* data, int len, const struct sockaddr* /*dst*/, int /*dstlen*/)
 {
     static_cast<Harness*>(opaq)->core->InjectDatagram(reinterpret_cast<const std::uint8_t*>(data),
@@ -111,8 +125,8 @@ int CallerSend(void* opaq, const char* data, int len, const struct sockaddr* /*d
     return len;
 }
 
-// core -> caller: the core's sink rides the raw socket's transport,
-// sourced from the label the caller connected to.
+// core -> caller: the core's sink rides the caller queue, sourced from
+// the label the caller connected to.
 int CoreSink(void* opaq, const char* data, int len)
 {
     Harness* h = static_cast<Harness*>(opaq);
@@ -121,11 +135,10 @@ int CoreSink(void* opaq, const char* data, int len)
         return len; // gate shut: drop the datagram, claim success
     }
     h->gate_pass_left.fetch_sub(1, std::memory_order_relaxed);
-    return srt_virtual_transport_inject(h->caller_vt,
-                                        data,
-                                        len,
-                                        reinterpret_cast<const sockaddr*>(&h->listener_label),
-                                        static_cast<int>(sizeof h->listener_label)) == -1
+    return h->caller_queue.push(data,
+                                static_cast<std::size_t>(len),
+                                reinterpret_cast<const sockaddr*>(&h->listener_label),
+                                sizeof h->listener_label) == -1
                ? -1
                : len;
 }
@@ -169,11 +182,23 @@ bool EstablishWirePair(WirePair& w, const quicsrt::ReceiverCoreParams& params, i
     bool ok     = true;
     auto SetOpt = [&ok](SRTSOCKET u, SRT_SOCKOPT opt, int value)
     { ok = ok && srt_setsockopt(u, 0, opt, &value, sizeof value) != SRT_ERROR; };
-    SetOpt(w.caller, SRTO_SKIP_INDUCTION, 1);
     SetOpt(w.caller, SRTO_PAYLOADSIZE, 1128);
     SetOpt(w.caller, SRTO_LATENCY, 120);
-    w.h.caller_vt = srt_attach_virtual_transport(w.caller, CallerSend, &w.h);
-    ok            = ok && w.h.caller_vt != nullptr;
+    // The caller's virtual bind replaces the old attach: the handshake
+    // form is the Conclusion-first one the core answers (the fork's
+    // internal C++ bind path - not a public API setting), and the config
+    // carries no RTT seed (0: the seed under test is the core's, never
+    // the caller's). The label is the caller's own (the core's peer label,
+    // M0's caller label) - a pure label: the wire callbacks hand every
+    // datagram straight to the other half, nothing routes by address.
+    const sockaddr_in caller_label = FillV4("10.220.0.1", 5556);
+    const SRT_VirtualTransportConfig cfg = w.h.caller_queue.getConfig(0);
+    ok = ok && srt::CUDT::bind_virtual(w.caller,
+                                  reinterpret_cast<const sockaddr*>(&caller_label),
+                                  (int)sizeof caller_label,
+                                  &cfg,
+                                  /*conclusion_first=*/true)
+                  != SRT_ERROR;
     if (!ok)
     {
         Fail("caller socket setup");
@@ -198,7 +223,8 @@ bool EstablishWirePair(WirePair& w, const quicsrt::ReceiverCoreParams& params, i
 // Teardown in the M0 order: caller socket first (its shutdown rides
 // InjectDatagram into the still-open core), then the core's Finalize
 // (closes the core's sockets through the sink into the caller's
-// still-live transport handle), the caller transport released last.
+// still-live queue), the caller queue detached last - the sockets
+// before the detach, the srt_bind_virtual contract.
 void TeardownWirePair(WirePair& w)
 {
     if (w.caller != SRT_INVALID_SOCK)
@@ -209,10 +235,7 @@ void TeardownWirePair(WirePair& w)
     {
         w.core->Finalize();
     }
-    if (w.h.caller_vt != nullptr)
-    {
-        srt_virtual_transport_release(w.h.caller_vt);
-    }
+    w.h.caller_queue.detach();
 }
 
 // Runs one handshake with the given configured/measured RTT pair and

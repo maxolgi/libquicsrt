@@ -30,9 +30,13 @@ https://127.0.0.1:8443/cert-hash.js`.
 
 ## Dependencies (deps/)
 
-- `deps/srt` — submodule: the fork `maxolgi/srt`, branch `quicsrt`
-  (virtual transport instead of OS sockets, no built-in crypto). Bumps
-  are normal commits: "Bump deps/srt to <sha>: ...".
+- `deps/srt` — submodule: the fork `maxolgi/srt`, branch `quicsrt-dev`
+  (upstream SRT `dev`/1.6.0 base). Virtual transport via the public
+  `srt_bind_virtual` + the `srttransport` push queue; the conclusion-first
+  (skip-induction) handshake form rides the fork's internal C++ path
+  (`srt::CUDT::bind_virtual` in `srtcore/core.h`), deliberately not the
+  public C API. No built-in crypto. Bumps are normal commits: "Bump
+  deps/srt to <sha>: ...".
 - `deps/lsquic` — submodule: the fork `maxolgi/lsquic`, branch `quicsrt`
   (upstream master + carried patches; currently: advertise draft-07+
   SETTINGS_WEBTRANSPORT_MAX_SESSIONS 0xc671706a so strict clients like

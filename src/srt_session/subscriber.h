@@ -7,10 +7,12 @@
 // the fixed teardown order) - see receiver_core.h for the threading and
 // lifetime rules; this adapter adds exactly the WT specifics:
 //
-//   - OnSessionReady derives the automatic SRTO_INITIAL_RTT seed from
-//     the WT layer's smoothed RTT (lsquic_conn_get_info) and starts the
-//     core's listener; a nonzero params.initial_rtt_ms overrides the
-//     seed (the core applies the preference).
+//   - OnSessionReady derives the automatic initial-RTT seed (the
+//     SRT_VirtualTransportConfig.initial_rtt_ms the core hands to
+//     srt_bind_virtual) from the WT layer's smoothed RTT
+//     (lsquic_conn_get_info) and starts the core's listener; a nonzero
+//     params.initial_rtt_ms overrides the seed (the core applies the
+//     preference).
 //   - WT close reasons map to graceful/end-of-stream vs error
 //     (ReasonIsCleanEnd).
 //   - RequestClose closes the WT session gracefully; the resulting
@@ -28,7 +30,9 @@
 #include "srt_session/receiver_core.h"
 #include "wt/client.h"
 
-// The fork's gated API (build with SRT_ENABLE_VIRTUAL_TRANSPORT defined).
+// The fork's public header: the virtual-transport API (srt_bind_virtual,
+// SRT_VirtualTransportConfig) is declared unconditionally - the
+// SRT_ENABLE_VIRTUAL_TRANSPORT define only compiles the seam in.
 #include "srt.h"
 
 namespace quicsrt

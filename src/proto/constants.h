@@ -39,7 +39,8 @@ constexpr int BufferPackets(int latency_ms)
     return static_cast<int>(std::clamp(needed, 8192LL, 320000LL));
 }
 
-// The SRTO_INITIAL_RTT seed: an explicitly configured initial_rtt_ms (> 0)
+// The initial-RTT seed (SRT_VirtualTransportConfig.initial_rtt_ms handed
+// to srt_bind_virtual): an explicitly configured initial_rtt_ms (> 0)
 // overrides the transport-measured RTT, passing through the same 1..30000
 // ms bounds the measured seed is clamped to (the public config validation
 // already guarantees them). measured_ms arrives already clamped; 0 =

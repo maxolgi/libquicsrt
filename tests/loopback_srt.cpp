@@ -1,7 +1,7 @@
 // M0 loopback: two forked-srt sockets connected skip-induction over an
 // in-memory wire pair (virtual transport seam, zero OS sockets). Gate
 // criteria: handshake, byte-exact 20000 x 1128 stream, NAK-driven loss
-// recovery of one swallowed packet, SRTO_INITIAL_RTT seeding, negotiated
+// recovery of one swallowed packet, initial-RTT seeding, negotiated
 // payload readback, fd-count proof that no OS socket was created.
 //
 // Plain checks (not assert) so the test stays meaningful in Release.
@@ -20,6 +20,10 @@
 #include <unistd.h>
 
 #include "srt.h"
+#include "srttransport.h"
+
+// The fork's internal C++ bind path (conclusion_first; see core.h).
+#include "core.h"
 
 namespace
 {
@@ -60,9 +64,9 @@ void Fail(const std::string& what)
 // network; they only label the endpoints for SRT's dispatching.
 struct Wire
 {
-    SRTVirtualTransport* peer        = nullptr;
-    sockaddr_storage     source_addr = {};
-    socklen_t            source_len  = 0;
+    srt::SRTTransportQueue* peer        = nullptr;
+    sockaddr_storage        source_addr = {};
+    socklen_t               source_len  = 0;
     // The first datagram carrying this byte sequence is swallowed (one-shot
     // loss); retransmissions carry the same payload and pass through.
     const char* swallow_tag = nullptr;
@@ -79,9 +83,8 @@ int WireSend(void* opaq, const char* data, int len, const struct sockaddr* /*dst
         return len;
     }
 
-    if (srt_virtual_transport_inject(
-            w->peer, data, len, reinterpret_cast<const sockaddr*>(&w->source_addr), static_cast<int>(w->source_len)) ==
-        -1)
+    if (w->peer->push(
+            data, static_cast<size_t>(len), reinterpret_cast<const sockaddr*>(&w->source_addr), w->source_len) == -1)
     {
         return -1;
     }
@@ -125,17 +128,20 @@ void FillMessage(int index, uint32_t* words)
     }
 }
 
-// The sockets must be closed before the transports are released: srt_close
+// The sockets must be closed before the queues are detached: srt_close
 // sends the shutdown through the wire callbacks, which touch the wires.
+// The wires precede the queues whose send callbacks read them - members
+// are destroyed in reverse order - and the queues must outlive every
+// socket bound with their config.
 struct Session
 {
-    SRTSOCKET            listener    = SRT_INVALID_SOCK;
-    SRTSOCKET            caller      = SRT_INVALID_SOCK;
-    SRTSOCKET            accepted    = SRT_INVALID_SOCK;
-    SRTVirtualTransport* listener_vt = nullptr;
-    SRTVirtualTransport* caller_vt   = nullptr;
-    Wire                 caller_wire;
-    Wire                 listener_wire;
+    SRTSOCKET              listener = SRT_INVALID_SOCK;
+    SRTSOCKET              caller   = SRT_INVALID_SOCK;
+    SRTSOCKET              accepted = SRT_INVALID_SOCK;
+    Wire                   caller_wire;
+    Wire                   listener_wire;
+    srt::SRTTransportQueue caller_queue{&WireSend, &caller_wire};
+    srt::SRTTransportQueue listener_queue{&WireSend, &listener_wire};
 
     ~Session()
     {
@@ -151,14 +157,8 @@ struct Session
         {
             srt_close(listener);
         }
-        if (caller_vt != nullptr)
-        {
-            srt_virtual_transport_release(caller_vt);
-        }
-        if (listener_vt != nullptr)
-        {
-            srt_virtual_transport_release(listener_vt);
-        }
+        caller_queue.detach();
+        listener_queue.detach();
     }
 };
 
@@ -206,38 +206,49 @@ bool SetOptI64(SRTSOCKET u, SRT_SOCKOPT opt, int64_t value)
     return srt_setsockopt(u, 0, opt, &value, sizeof value) != SRT_ERROR;
 }
 
-// (a) Handshake: skip-induction caller (Conclusion-first) against an
-// attached listener explicitly bound to a label address the caller then
-// connects to.
+// (a) Handshake: skip-induction caller (Conclusion-first) against a
+// listener bound virtually to a label address the caller then connects to.
 bool ConnectPair(Session& s, const sockaddr_in& listener_label, const sockaddr_in& caller_addr)
 {
-    const int yes = 1;
-
     s.listener = srt_create_socket();
     CHECK(s.listener != SRT_INVALID_SOCK);
-    CHECK(SetOptInt(s.listener, SRTO_SKIP_INDUCTION, yes));
     CHECK(SetOptInt(s.listener, SRTO_PAYLOADSIZE, kPayloadSize));
     CHECK(SetOptInt(s.listener, SRTO_LATENCY, kLatencyMs));
-    s.listener_vt = srt_attach_virtual_transport(s.listener, WireSend, &s.listener_wire);
-    CHECK(s.listener_vt != nullptr);
-    CHECK(srt_bind(s.listener, (const sockaddr*)&listener_label, (int)sizeof listener_label) != SRT_ERROR);
+    {
+        // The conclusion-first form rides the fork's internal C++ bind
+        // path; the listener takes no RTT seed.
+        const SRT_VirtualTransportConfig cfg = s.listener_queue.getConfig(0);
+        CHECK(srt::CUDT::bind_virtual(s.listener,
+                                 (const sockaddr*)&listener_label,
+                                 (int)sizeof listener_label,
+                                 &cfg,
+                                 /*conclusion_first=*/true)
+              != SRT_ERROR);
+    }
     CHECK(srt_listen(s.listener, 5) != SRT_ERROR);
 
     s.caller = srt_create_socket();
     CHECK(s.caller != SRT_INVALID_SOCK);
-    CHECK(SetOptInt(s.caller, SRTO_SKIP_INDUCTION, yes));
     CHECK(SetOptInt(s.caller, SRTO_PAYLOADSIZE, kPayloadSize));
     CHECK(SetOptInt(s.caller, SRTO_LATENCY, kLatencyMs));
-    CHECK(SetOptInt(s.caller, SRTO_INITIAL_RTT, kSeedRttMs));
     CHECK(SetOptInt(s.caller, SRTO_SNDTIMEO, kTimeoutMs));
     CHECK(SetOptI64(s.caller, SRTO_MAXBW, kMaxBw));
     CHECK(SetOptInt(s.caller, SRTO_SNDBUF, kSndBufBytes));
-    s.caller_vt = srt_attach_virtual_transport(s.caller, WireSend, &s.caller_wire);
-    CHECK(s.caller_vt != nullptr);
+    {
+        // The RTT seed rides the transport config; the options above stay
+        // socket options, the handshake form the internal bind path.
+        const SRT_VirtualTransportConfig cfg = s.caller_queue.getConfig(kSeedRttMs);
+        CHECK(srt::CUDT::bind_virtual(s.caller,
+                                 (const sockaddr*)&caller_addr,
+                                 (int)sizeof caller_addr,
+                                 &cfg,
+                                 /*conclusion_first=*/true)
+              != SRT_ERROR);
+    }
 
-    s.caller_wire.peer = s.listener_vt;
+    s.caller_wire.peer = &s.listener_queue;
     FillWireSource(s.caller_wire, caller_addr);
-    s.listener_wire.peer = s.caller_vt;
+    s.listener_wire.peer = &s.caller_queue;
     FillWireSource(s.listener_wire, listener_label);
     s.caller_wire.swallow_tag = kSwallowTag;
 
@@ -255,7 +266,7 @@ bool ConnectPair(Session& s, const sockaddr_in& listener_label, const sockaddr_i
     CHECK(srt_getsockstate(s.accepted) == SRTS_CONNECTED);
     CHECK(SetOptInt(s.accepted, SRTO_RCVTIMEO, kTimeoutMs));
 
-    std::printf("handshake: skip-induction connect/accept, no explicit bind\n");
+    std::printf("handshake: skip-induction connect/accept over virtual bindings\n");
     return true;
 }
 
@@ -364,7 +375,7 @@ int main()
 
     const int fds_before = CountSocketFds();
 
-    // The label address the attached listener is bound to; the fake caller
+    // The label address the listener is virtually bound to; the fake caller
     // address the accepted socket will report as its peer.
     const sockaddr_in listener_label = FillV4("10.213.255.254", 0);
     const sockaddr_in caller_addr    = FillV4("10.220.0.1", 5556);

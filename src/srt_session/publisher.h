@@ -19,9 +19,14 @@
 //   SRTO_RCVLATENCY     params.tsbpd_latency_ms (TSBPD = max(both sides))
 //   SRTO_PEERLATENCY    params.tsbpd_latency_ms
 //   SRTO_SNDBUF/SRTO_RCVBUF  latency-scaled packets x 1472 bytes
-//   SRTO_SKIP_INDUCTION 1 (listener accepts Conclusion-first)
-//   SRTO_INITIAL_RTT    params.initial_rtt_ms when explicitly set, else
-//                       the QUIC smoothed RTT clamped to 1..30000 ms
+//
+// The handshake form and the initial RTT ride the virtual bind, not
+// socket options: the bind goes through the fork's INTERNAL C++ path
+// with the conclusion-first form (skip-induction - the listener answers
+// the Conclusion handshake the gateway floods; deliberately not reachable
+// through the public C API), and initial_rtt_ms = params.initial_rtt_ms
+// when explicitly set, else the QUIC smoothed RTT clamped to 1..30000 ms
+// (0 = srt's own estimator).
 //
 // Write path: the app thread hands over arbitrary-size buffers; TsChunker
 // (below) frames them into <= payload-size, 188-aligned live messages and
@@ -60,15 +65,17 @@
 // (loop thread = WTClientListener + engine driving; srt multiplexer
 // threads = VtSend; a short-lived accept thread; the app thread =
 // Start/Write/End/Stats/Stop). The lifetime rules are the subscriber's:
-// state under mutex_, cv_ for transitions, OnDatagram injects under the
-// mutex so Finalize can park it, and the shutdown order is state ->
-// kClosed + vt_ = null under the mutex, then OUTSIDE it srt_close
+// state under mutex_, cv_ for transitions, OnDatagram pushes into the
+// queue WITHOUT the mutex (the queue is internally synchronized; the
+// closed_ check and Finalize's detach park it), and the shutdown order
+// is state -> kClosed under the mutex, then OUTSIDE it srt_close
 // (accepted first, then listener - wakes a blocked accept), join the
-// accept thread, and release the transport handle last (srt_close sends
-// its shutdown through the send callback). One DELTA: there is no
-// drain-deferred teardown - the subscriber keeps a gracefully-ended
-// accepted socket open to drain TSBPD-held RECEIVED data, but a publisher
-// receives only ACK/NAK, so the teardown is immediate.
+// accept thread, and detach the queue last (srt_close sends its
+// shutdown through the queue's send callback; the queue is a member, so
+// it outlives every socket bound with its config). One DELTA: there is
+// no drain-deferred teardown - the subscriber keeps a gracefully-ended
+// accepted socket open to drain TSBPD-held RECEIVED data, but a
+// publisher receives only ACK/NAK, so the teardown is immediate.
 
 #ifndef QUICSRT_SRT_SESSION_PUBLISHER_H
 #define QUICSRT_SRT_SESSION_PUBLISHER_H
@@ -87,8 +94,10 @@
 #include "proto/constants.h"
 #include "wt/client.h"
 
-// The fork's gated API (build with SRT_ENABLE_VIRTUAL_TRANSPORT defined).
+// The fork's virtual transport: the push-queue helper over the public
+// srt_bind_virtual callback seam (built with ENABLE_VIRTUAL_TRANSPORT).
 #include "srt.h"
+#include "srttransport.h"
 
 namespace quicsrt
 {
@@ -219,7 +228,7 @@ private:
     static int VtSendThunk(void* opaq, const char* data, int len, const struct sockaddr* dst, int dstlen);
     int        VtSend(const char* data, int len);
 
-    // Builds the listener: socket, options, transport attach, listen.
+    // Builds the listener: socket, options, virtual bind, listen.
     bool StartListener(std::string* error);
 
     // Terminal transition: records the reason, wakes waiters, tears the
@@ -264,7 +273,6 @@ private:
     std::string             close_reason_; // first reason wins
     SRTSOCKET               listener_ = SRT_INVALID_SOCK;
     SRTSOCKET               accepted_ = SRT_INVALID_SOCK;
-    SRTVirtualTransport*    vt_       = nullptr;
     std::thread             accept_thread_;
 
     // App-thread-only (Write/End run on the controlling thread): the
@@ -273,6 +281,14 @@ private:
 
     // Lock-free mirror of state_ == kClosed for the srt send callback.
     std::atomic<bool> closed_{false};
+
+    // The virtual transport of every socket this session binds: the fork's
+    // push queue (srt_bind_virtual + SRT_VirtualTransportConfig). A
+    // member, so it outlives the sockets bound with its config; declared
+    // last, so it is destroyed first - its callback reads only closed_
+    // and client_ above, which are trivially destructible by then (and no
+    // callback can be in flight: Finalize closes the sockets first).
+    srt::SRTTransportQueue vt_queue_{&VtSendThunk, this};
 };
 
 } // namespace quicsrt

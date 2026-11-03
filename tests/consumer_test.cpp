@@ -7,12 +7,14 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <thread>
 
 #include "core/event_loop.h" // internal header via the src/ interface dir
 #include "lsquic.h"          // via quicsrt::wt-deps
 #include "srt.h"             // via quicsrt::quicsrt -> quicsrt::srt-deps
+#include "srttransport.h"    // via quicsrt::quicsrt -> quicsrt::srt-deps
 #include "quicsrt/quicsrt_c.h" // public API via the include/ interface dir
 
 namespace
@@ -31,12 +33,17 @@ void check(bool ok, const char* what)
 
 int main()
 {
-    // (a) srt fork headers under the virtual-transport gate: the enum and
-    // the attach entry point only exist when the define is exported.
-    static_assert(SRTO_SKIP_INDUCTION == 64,
-                  "SRTO_SKIP_INDUCTION missing: SRT_ENABLE_VIRTUAL_TRANSPORT "
-                  "did not reach the consumer");
-    (void)&srt_attach_virtual_transport;
+    // (a) the fork's virtual-transport surface: the VT types are declared
+    // unconditionally in srt.h now, so the probes are the config layout
+    // and srt_bind_virtual - plus the srttransport push-queue helper,
+    // whose header and library must reach the consumer the same way.
+    // (The conclusion-first handshake form is deliberately NOT part of
+    // this surface: it rides the fork's internal C++ bind path only.)
+    static_assert(offsetof(SRT_VirtualTransportConfig, initial_rtt_ms) > 0,
+                  "SRT_VirtualTransportConfig fields missing: the fork's "
+                  "srt.h did not reach the consumer");
+    (void)&srt_bind_virtual;
+    (void)&srt::SRTTransportQueue::getConfig;
     check(srt_startup() == 0, "srt_startup/srt_cleanup link+run");
     srt_cleanup();
 
