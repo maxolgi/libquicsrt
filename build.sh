@@ -13,6 +13,9 @@ Commands:
     ffmpeg     Build patched upstream FFmpeg with the quicsrt protocol AND the
                system libsrt (--enable-libsrt): stages the shared libquicsrt.so
                (C-ABI-only exports) so both protocols coexist in one binary
+               NOTE: re-run this after EVERY libquicsrt rebuild (./build.sh lib,
+               a deps/srt bump, ...): FFmpeg loads the staged libquicsrt.so,
+               which only this command refreshes
 
 Environment:
     QUICSRT_ENABLE_WT=OFF  setup without WebTransport: skips BoringSSL and

@@ -12,6 +12,9 @@ FFmpeg's `quicsrt://` protocol, talking to any QuicSRT gateway.
     ./build.sh test      # ctest --preset release; no external services needed
 
 - Order matters: `setup` once, then `lib`/`test` freely.
+- After any libquicsrt rebuild (including a deps/srt bump), re-run
+  `./build.sh ffmpeg`: the FFmpeg gate loads the staged `libquicsrt.so`,
+  which only that command refreshes - a stale stage runs the old fork.
 - `QUICSRT_ENABLE_WT=OFF ./build.sh setup` = srt-only fast path (no
   BoringSSL, no lsquic, no WebTransport code) for quick iteration.
 - Single test: `ctest --preset release -R capsule_test`.
