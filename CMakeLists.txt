@@ -290,6 +290,20 @@ target_compile_definitions(loopback_srt PRIVATE SRT_ENABLE_VIRTUAL_TRANSPORT)
 target_link_libraries(loopback_srt PRIVATE quicsrt_warnings Threads::Threads srt_static srttransport)
 add_test(NAME loopback_srt COMMAND loopback_srt)
 
+# Publisher sender under reverse-path (ACK) starvation: the no--re push
+# shape's transient control blackout is survived via the publisher's
+# peer-idle budget; a permanent blackout still expires the socket.
+add_executable(publisher_starve_test tests/publisher_starve_test.cpp)
+target_compile_features(publisher_starve_test PRIVATE cxx_std_20)
+set_target_properties(publisher_starve_test PROPERTIES CXX_EXTENSIONS OFF)
+target_include_directories(publisher_starve_test PRIVATE deps/srt/srtcore deps/srt/common
+    deps/srt/haicrypt deps/srt/logging
+    deps/srt/srttransport ${CMAKE_CURRENT_BINARY_DIR}/deps/srt)
+target_compile_definitions(publisher_starve_test PRIVATE SRT_ENABLE_VIRTUAL_TRANSPORT)
+target_link_libraries(publisher_starve_test PRIVATE quicsrt_warnings Threads::Threads srt_static srttransport)
+add_test(NAME publisher_starve_test COMMAND publisher_starve_test)
+set_tests_properties(publisher_starve_test PROPERTIES TIMEOUT 120)
+
 # ReceiverCore session coverage: the WT-free receiver half driven end to
 # end against a raw forked-srt initiator over an in-memory wire pair (the
 # M0 pattern with the core as the listener half) - here proving the

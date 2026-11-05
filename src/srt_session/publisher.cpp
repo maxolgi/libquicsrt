@@ -30,6 +30,9 @@ constexpr int kDrainSliceMs = 10;
 // latency window still withheld when the ACK drain completed.
 constexpr int kEndReleaseMarginMs = 250;
 
+// Peer-idle budget for the publisher's SRT sockets; see StartListener.
+constexpr int kPeerIdleTimeoutMs = 15000;
+
 // The reasons WTClient reports for a deliberately or peer-initiated clean
 // end; everything else (TLS failure, non-200 CONNECT, socket errors) is an
 // error from the publisher's point of view. Same set as the subscriber.
@@ -209,7 +212,10 @@ void PublisherSession::AcceptThread(SRTSOCKET listener)
         // The handshake negotiates min(gateway, listener) payload: the
         // chunker must frame to the negotiated size, not the configured
         // one (M0's negotiated-payload readback; see negotiate.h).
-        chunker_  = TsChunker(NegotiatePayload(accepted, params_.payload_size));
+        chunker_ = TsChunker(NegotiatePayload(accepted, params_.payload_size));
+        // The accepted socket's config is snapshotted at handshake time,
+        // so the listener's peer-idle budget is re-applied here.
+        SetOptInt(accepted, SRTO_PEERIDLETIMEO, kPeerIdleTimeoutMs);
         accepted_ = accepted;
         state_    = State::kConnected;
     }
@@ -273,6 +279,17 @@ bool PublisherSession::StartListener(std::string* error)
         // both directions stay latency-scaled like the browser publisher.
         ok = ok && SetOptInt(listener, SRTO_SNDBUF, buf_pkts * kBytesPerPacket);
         ok = ok && SetOptInt(listener, SRTO_RCVBUF, buf_pkts * kBytesPerPacket);
+        // Ride out reverse-path starvation: an unpaced push (the no--re
+        // ffmpeg shape) floods the datagram medium enough that the peer's
+        // SRT control traffic (the ACKs and keepalives back to this
+        // sender) can be lost for seconds while the peer is perfectly
+        // healthy and has received every packet. The stock 5 s peer-idle
+        // budget then expires the sender's socket (silently - live-mode
+        // too-late drops swallow the unACKed tail) and the session ends
+        // mid-push. 15 s outlasts the transient blackout; a genuinely
+        // dead peer is still detected - and far faster in practice, the
+        // enclosing WT/QUIC layer's own connection timeouts surface it.
+        ok = ok && SetOptInt(listener, SRTO_PEERIDLETIMEO, kPeerIdleTimeoutMs);
         if (!ok)
         {
             *error = std::string("srt socket option: ") + srt_getlasterror_str();
