@@ -176,10 +176,7 @@ void PublisherSession::OnDatagram(const std::uint8_t* data, std::size_t size)
     {
         return;
     }
-    vt_queue_.push(data,
-                   size,
-                   reinterpret_cast<const sockaddr*>(&peer_label_),
-                   sizeof peer_label_);
+    vt_queue_.push(data, size, reinterpret_cast<const sockaddr*>(&peer_label_), sizeof peer_label_);
 }
 
 // ---- accept thread ----
@@ -312,15 +309,14 @@ bool PublisherSession::StartListener(std::string* error)
         // thread must be parked here.
         sockaddr_in label_addr;
         std::memset(&label_addr, 0, sizeof label_addr);
-        label_addr.sin_family      = AF_INET;
-        label_addr.sin_addr.s_addr = inet_addr("10.213.255.254");
+        label_addr.sin_family                = AF_INET;
+        label_addr.sin_addr.s_addr           = inet_addr("10.213.255.254");
         const SRT_VirtualTransportConfig cfg = vt_queue_.getConfig(rtt_ms);
         if (srt::CUDT::bind_virtual(listener,
-                               (sockaddr*)&label_addr,
-                               (int)sizeof label_addr,
-                               &cfg,
-                               /*conclusion_first=*/true)
-            == SRT_ERROR)
+                                    (sockaddr*)&label_addr,
+                                    (int)sizeof label_addr,
+                                    &cfg,
+                                    /*conclusion_first=*/true) == SRT_ERROR)
         {
             *error = std::string("bind_virtual: ") + srt_getlasterror_str();
             break;

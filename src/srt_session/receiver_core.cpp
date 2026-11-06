@@ -38,7 +38,9 @@ bool SetOptInt(SRTSOCKET u, SRT_SOCKOPT opt, int value)
 } // namespace
 
 ReceiverCore::ReceiverCore(ReceiverCoreParams params, DatagramSink sink, void* sink_opaq)
-    : sink_(sink), sink_opaq_(sink_opaq), params_(params)
+    : sink_(sink)
+    , sink_opaq_(sink_opaq)
+    , params_(params)
 {
     // Fake gateway address (10.220.0.1:5556 - M0's caller label). It is
     // only a label: dispatch happens by destination socket id inside the
@@ -105,15 +107,14 @@ bool ReceiverCore::Start(int measured_rtt_ms, std::string* error)
         // the config's initial_rtt_ms carries the seed.
         sockaddr_in label_addr;
         std::memset(&label_addr, 0, sizeof label_addr);
-        label_addr.sin_family      = AF_INET;
-        label_addr.sin_addr.s_addr = inet_addr("10.213.255.254");
+        label_addr.sin_family                = AF_INET;
+        label_addr.sin_addr.s_addr           = inet_addr("10.213.255.254");
         const SRT_VirtualTransportConfig cfg = vt_queue_.getConfig(rtt_seed);
         if (srt::CUDT::bind_virtual(listener,
-                               reinterpret_cast<sockaddr*>(&label_addr),
-                               (int)sizeof label_addr,
-                               &cfg,
-                               /*conclusion_first=*/true)
-            == SRT_ERROR)
+                                    reinterpret_cast<sockaddr*>(&label_addr),
+                                    (int)sizeof label_addr,
+                                    &cfg,
+                                    /*conclusion_first=*/true) == SRT_ERROR)
         {
             *error = std::string("bind_virtual: ") + srt_getlasterror_str();
             break;
@@ -198,10 +199,7 @@ void ReceiverCore::InjectDatagram(const std::uint8_t* data, std::size_t size)
     {
         return;
     }
-    vt_queue_.push(data,
-                   size,
-                   reinterpret_cast<const sockaddr*>(&peer_label_),
-                   sizeof peer_label_);
+    vt_queue_.push(data, size, reinterpret_cast<const sockaddr*>(&peer_label_), sizeof peer_label_);
 }
 
 void ReceiverCore::Shutdown(const std::string& reason, bool graceful)

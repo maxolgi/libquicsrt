@@ -16,7 +16,7 @@
 // listener through the fork's INTERNAL C++ bind path with the
 // conclusion-first handshake form (skip-induction - the listener answers
 // the Conclusion handshake the initiator floods; deliberately not
-// reachable through the public C API) and initial_rtt_ms = 
+// reachable through the public C API) and initial_rtt_ms =
 // params.initial_rtt_ms when explicitly set, else the measured RTT
 // clamped to 1..30000 ms (0 = srt's own estimator), and InjectDatagram
 // pushes into the queue.

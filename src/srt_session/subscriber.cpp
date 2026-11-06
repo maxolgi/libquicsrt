@@ -50,9 +50,7 @@ void SubscriberSession::OnSessionReady()
     // params.initial_rtt_ms overrides it - the core applies the
     // preference (InitialRttSeedMs).
     const auto rtt_us      = client_->SmoothedRtt().count();
-    const int  measured_ms = rtt_us > 0
-                                 ? static_cast<int>(std::clamp<long long>(rtt_us / 1000, 1, 30000))
-                                 : 0;
+    const int  measured_ms = rtt_us > 0 ? static_cast<int>(std::clamp<long long>(rtt_us / 1000, 1, 30000)) : 0;
 
     std::string error;
     if (!core_.Start(measured_ms, &error))

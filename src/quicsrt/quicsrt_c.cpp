@@ -21,26 +21,32 @@
 struct quicsrt_publisher
 {
     std::unique_ptr<quicsrt::Publisher> obj;
-    std::string                        error;
+    std::string                         error;
 
-    explicit quicsrt_publisher(std::unique_ptr<quicsrt::Publisher> o) : obj(std::move(o)) {}
+    explicit quicsrt_publisher(std::unique_ptr<quicsrt::Publisher> o)
+        : obj(std::move(o))
+    {
+    }
 };
 
 struct quicsrt_subscriber
 {
     std::unique_ptr<quicsrt::Subscriber> obj;
-    std::string                         error;
+    std::string                          error;
 
-    explicit quicsrt_subscriber(std::unique_ptr<quicsrt::Subscriber> o) : obj(std::move(o)) {}
+    explicit quicsrt_subscriber(std::unique_ptr<quicsrt::Subscriber> o)
+        : obj(std::move(o))
+    {
+    }
 };
 
 namespace
 {
 
 // Start-parameter defaults (mirrors config.hpp; <= 0 selects these).
-constexpr std::uint16_t kDefaultPort          = 443;
-constexpr int           kDefaultLatencyMs     = 120;
-constexpr int           kDefaultConnectMs     = 10000;
+constexpr std::uint16_t kDefaultPort      = 443;
+constexpr int           kDefaultLatencyMs = 120;
+constexpr int           kDefaultConnectMs = 10000;
 
 // MapStart's case labels are the façade enums' integer VALUES, not their
 // names: a reorder of either enum would silently mistranslate. Pin every
@@ -63,14 +69,22 @@ quicsrt_status_t MapStart(int status)
 {
     switch (status)
     {
-    case 0:  return QUICSRT_OK;        // kPublishOk / kStartOk
-    case 1:  return QUICSRT_ECONFIG;   // kXInvalidConfig
-    case 2:  return QUICSRT_ESTATE;    // kXAlreadyStarted
-    case 3:  return QUICSRT_ETARGET;   // kXInvalidTarget
-    case 4:  return QUICSRT_EREJECTED; // kXRejected
-    case 5:  return QUICSRT_ECONNECT;  // kXConnectFailed
-    case 6:  return QUICSRT_ETIMEOUT;  // kXTimedOut
-    default: return QUICSRT_EINTERNAL; // kXInternal
+    case 0:
+        return QUICSRT_OK; // kPublishOk / kStartOk
+    case 1:
+        return QUICSRT_ECONFIG; // kXInvalidConfig
+    case 2:
+        return QUICSRT_ESTATE; // kXAlreadyStarted
+    case 3:
+        return QUICSRT_ETARGET; // kXInvalidTarget
+    case 4:
+        return QUICSRT_EREJECTED; // kXRejected
+    case 5:
+        return QUICSRT_ECONNECT; // kXConnectFailed
+    case 6:
+        return QUICSRT_ETIMEOUT; // kXTimedOut
+    default:
+        return QUICSRT_EINTERNAL; // kXInternal
     }
 }
 
@@ -155,9 +169,13 @@ void quicsrt_publisher_destroy(quicsrt_publisher_t* pub)
     delete pub; // ~Publisher stops a live session
 }
 
-quicsrt_status_t quicsrt_publisher_start(
-    quicsrt_publisher_t* pub, const char* host, int port, const char* stream,
-    const char* cert_hash_hex, int latency_ms, int timeout_ms)
+quicsrt_status_t quicsrt_publisher_start(quicsrt_publisher_t* pub,
+                                         const char*          host,
+                                         int                  port,
+                                         const char*          stream,
+                                         const char*          cert_hash_hex,
+                                         int                  latency_ms,
+                                         int                  timeout_ms)
 {
     if (pub == nullptr || pub->obj == nullptr)
     {
@@ -171,14 +189,14 @@ quicsrt_status_t quicsrt_publisher_start(
     try
     {
         quicsrt::PublisherConfig cfg;
-        cfg.host            = host;
-        cfg.port            = port > 0 && port <= 65535 ? static_cast<std::uint16_t>(port) : kDefaultPort;
-        cfg.stream_name     = stream;
-        cfg.cert_sha256_hex = cert_hash_hex != nullptr ? cert_hash_hex : "";
+        cfg.host               = host;
+        cfg.port               = port > 0 && port <= 65535 ? static_cast<std::uint16_t>(port) : kDefaultPort;
+        cfg.stream_name        = stream;
+        cfg.cert_sha256_hex    = cert_hash_hex != nullptr ? cert_hash_hex : "";
         cfg.tsbpd_latency_ms   = latency_ms > 0 ? latency_ms : kDefaultLatencyMs;
         cfg.connect_timeout_ms = timeout_ms > 0 ? timeout_ms : kDefaultConnectMs;
-        const int status = pub->obj->Start(cfg);
-        pub->error       = pub->obj->LastError();
+        const int status       = pub->obj->Start(cfg);
+        pub->error             = pub->obj->LastError();
         return MapStart(status);
     }
     catch (const std::bad_alloc&)
@@ -261,9 +279,13 @@ void quicsrt_subscriber_destroy(quicsrt_subscriber_t* sub)
     delete sub;
 }
 
-quicsrt_status_t quicsrt_subscriber_start(
-    quicsrt_subscriber_t* sub, const char* host, int port, const char* stream,
-    const char* cert_hash_hex, int latency_ms, int timeout_ms)
+quicsrt_status_t quicsrt_subscriber_start(quicsrt_subscriber_t* sub,
+                                          const char*           host,
+                                          int                   port,
+                                          const char*           stream,
+                                          const char*           cert_hash_hex,
+                                          int                   latency_ms,
+                                          int                   timeout_ms)
 {
     if (sub == nullptr || sub->obj == nullptr)
     {
@@ -277,14 +299,14 @@ quicsrt_status_t quicsrt_subscriber_start(
     try
     {
         quicsrt::SubscriberConfig cfg;
-        cfg.host            = host;
-        cfg.port            = port > 0 && port <= 65535 ? static_cast<std::uint16_t>(port) : kDefaultPort;
-        cfg.stream_name     = stream;
-        cfg.cert_sha256_hex = cert_hash_hex != nullptr ? cert_hash_hex : "";
+        cfg.host               = host;
+        cfg.port               = port > 0 && port <= 65535 ? static_cast<std::uint16_t>(port) : kDefaultPort;
+        cfg.stream_name        = stream;
+        cfg.cert_sha256_hex    = cert_hash_hex != nullptr ? cert_hash_hex : "";
         cfg.tsbpd_latency_ms   = latency_ms > 0 ? latency_ms : kDefaultLatencyMs;
         cfg.connect_timeout_ms = timeout_ms > 0 ? timeout_ms : kDefaultConnectMs;
-        const int status = sub->obj->Start(cfg);
-        sub->error       = sub->obj->LastError();
+        const int status       = sub->obj->Start(cfg);
+        sub->error             = sub->obj->LastError();
         return MapStart(status);
     }
     catch (const std::bad_alloc&)
