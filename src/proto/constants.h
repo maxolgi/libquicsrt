@@ -30,13 +30,37 @@ constexpr std::size_t kMaxDatagramSize = 1184;
 // datagram whole and counts it - UDP-like loss SRT retransmits.
 constexpr std::size_t kMaxQueuedDatagrams = 256;
 
-// Buffer depth in packets, mirroring the browser peers
-// (crates/srt-wasm/src/lib.rs new_inner): enough for the TSBPD window at
-// 20 packets per millisecond, both directions, clamped to the ingest range.
+// Receive-role buffer depth in packets, mirroring the browser peer
+// (crates/srt-wasm/src/lib.rs new_inner: latency_ms * 20_000 / 1000 * 2
+// packets, clamped to [8192, 320000], applied to both its buffers): enough
+// for the TSBPD window at 20 packets per millisecond. This is RECEIVER
+// sizing (the subscriber, and the control-only receive halves) - the
+// data-sender window is SenderBufferPackets below; the split is
+// deliberate, do not reunify them.
 constexpr int BufferPackets(int latency_ms)
 {
     const long long needed = static_cast<long long>(latency_ms) * 40;
     return static_cast<int>(std::clamp(needed, 8192LL, 320000LL));
+}
+
+// Send-role buffer depth in packets: the retransmit/flow-control window a
+// data sender may hold unACKed. Deliberately NOT the wasm mirror: the
+// Rust srt-wasm type is the browser LISTENER (its send half carries only
+// SRT control traffic), and its 8192-packet floor exists for the browser
+// TSBPD receive window and wasm memory - on SRTO_SNDBUF it is a ~12 MB
+// retransmit window that swallows an unpaced push whole and masks reverse-
+// path ACK starvation. The Rust native sender (crates/quicsrt/src/
+// srt_sender.rs SrtConfig) already sizes its buffers independently of that
+// formula. Here the transport is virtual with ~1 ms RTT (a BDP of tens of
+// packets), so latency_ms * 8 (8 packets/ms: one TSBPD span in flight at a
+// ~72 Mbps sustained push) with a 1024-packet floor (~1.5 MB at 1472
+// bytes/packet) is a generously oversized window that still backpressures
+// a whole-stream burst onto the ACK clock. Same 320000 ceiling as the
+// mirror.
+constexpr int SenderBufferPackets(int latency_ms)
+{
+    const long long needed = static_cast<long long>(latency_ms) * 8;
+    return static_cast<int>(std::clamp(needed, 1024LL, 320000LL));
 }
 
 // The initial-RTT seed (SRT_VirtualTransportConfig.initial_rtt_ms handed

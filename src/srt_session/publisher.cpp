@@ -271,14 +271,19 @@ bool PublisherSession::StartListener(std::string* error)
 
         // SRTO_TRANSTYPE first: it resets the latency/payload presets.
         bool      ok       = SetOptInt(listener, SRTO_TRANSTYPE, SRTT_LIVE);
-        const int buf_pkts = BufferPackets(params_.tsbpd_latency_ms);
+        const int rcv_pkts = BufferPackets(params_.tsbpd_latency_ms);
+        const int snd_pkts = SenderBufferPackets(params_.tsbpd_latency_ms);
         ok                 = ok && SetOptInt(listener, SRTO_PAYLOADSIZE, params_.payload_size);
         ok                 = ok && SetOptInt(listener, SRTO_RCVLATENCY, params_.tsbpd_latency_ms);
         ok                 = ok && SetOptInt(listener, SRTO_PEERLATENCY, params_.tsbpd_latency_ms);
-        // SNDBUF carries the whole retransmit window for the sender role;
-        // both directions stay latency-scaled like the browser publisher.
-        ok = ok && SetOptInt(listener, SRTO_SNDBUF, buf_pkts * kBytesPerPacket);
-        ok = ok && SetOptInt(listener, SRTO_RCVBUF, buf_pkts * kBytesPerPacket);
+        // This socket is the data sender: SNDBUF is its retransmit window
+        // and is deliberately decoupled from the wasm-mirror math (a
+        // 12 MB window accepted an unpaced push wholesale in ~30 ms, so
+        // the app never felt backpressure and the bursts starved the
+        // reverse ACK path - see SenderBufferPackets). RCVBUF takes only
+        // the peer's control traffic and keeps the mirror sizing.
+        ok = ok && SetOptInt(listener, SRTO_SNDBUF, snd_pkts * kBytesPerPacket);
+        ok = ok && SetOptInt(listener, SRTO_RCVBUF, rcv_pkts * kBytesPerPacket);
         // Ride out reverse-path starvation: an unpaced push (the no--re
         // ffmpeg shape) floods the datagram medium enough that the peer's
         // SRT control traffic (the ACKs and keepalives back to this
