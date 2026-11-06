@@ -220,6 +220,7 @@ private:
     void OnSessionReady() override;
     void OnSessionClosed(const std::string& reason) override;
     void OnDatagram(const std::uint8_t* data, std::size_t size) override;
+    void OnStreamReadable() override;
 
     // ---- accept thread ----
     void AcceptThread(SRTSOCKET listener);

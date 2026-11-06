@@ -165,6 +165,20 @@ void PublisherSession::OnSessionClosed(const std::string& reason)
     Finalize(reason, ReasonIsCleanEnd(reason));
 }
 
+void PublisherSession::OnStreamReadable()
+{
+    // The gateway ends a publisher's WT session by closing the session
+    // stream after the SRT shutdown (a FIN or a CLOSE capsule, not a
+    // CONNECTION_CLOSE - that close form is reserved for viewers). A
+    // terminal session stream IS the session end, so without this the
+    // graceful close the gateway already sent is dropped and End's wait
+    // for it has no event source: it runs out its whole timeout and
+    // lands in the local-close fallback. Close the WT session here; the
+    // OnSessionClosed -> Finalize chain (which also tears the engine
+    // down) does the rest.
+    client_->Close();
+}
+
 void PublisherSession::OnDatagram(const std::uint8_t* data, std::size_t size)
 {
     // Push without the mutex: the queue is internally synchronized, and
