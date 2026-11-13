@@ -3,9 +3,7 @@
 **libquicsrt** is a C++ client library for QuicSRT — SRT live streaming over
 WebTransport. It publishes and subscribes MPEG-TS streams to any QuicSRT
 gateway, from plain C++ or directly from FFmpeg through the `quicsrt://`
-protocol, and interops with the reference
-[QuicSRT](https://github.com/maxolgi/QuicSRT) stack: the Rust gateway, its
-UDP ingest, and the browser player.
+protocol.
 
 QuicSRT carries SRT's live-streaming semantics — TSBPD latency control,
 retransmission, too-late drops — over HTTP/3 WebTransport, so the same
