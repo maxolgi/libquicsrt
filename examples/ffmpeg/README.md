@@ -3,19 +3,19 @@
 `quicsrt://host:port?stream=NAME` as input and output, against upstream
 FFmpeg. Built by `./build.sh ffmpeg`: fetches upstream FFmpeg at the
 pinned master snapshot (`FFMPEG_MASTER_COMMIT` in `build.sh`),
-applies `0001-avformat-add-quicsrt-protocol.patch`, and builds
-`deps/ffmpeg/ffmpeg` + `ffprobe` linked against the staged install
-tree (pkg-config prefix `build/release/stage`, from
-`./build.sh install`). Full chain (WebTransport enabled):
+applies `0001-avformat-add-libquicsrt-protocol.patch`, and builds
+`deps/ffmpeg/ffmpeg` + `ffprobe` linked against the staged shared
+`libquicsrt.so` flavor (pkg-config prefix `build/shared/stage`, staged
+by the target itself). Full chain (WebTransport enabled):
 
-    ./build.sh setup && ./build.sh lib && ./build.sh install && ./build.sh ffmpeg
+    ./build.sh setup && ./build.sh ffmpeg
 
 Bumping the FFmpeg pin = update `FFMPEG_MASTER_COMMIT` and re-verify
 `./build.sh ffmpeg`.
 
 ## URL grammar
 
-    quicsrt://host:port?stream=NAME[&cert_hash=HEX][&cert_hash_file=PATH][&pki=1][&latency_ms=N]
+    quicsrt://host:port?stream=NAME[&cert_hash=HEX][&pki=0|1][&latency_ms=N]
 
 - **Direction decides semantics**: an *output* (URL_WRONLY) publishes
   `NAME` toward the gateway (`?publish=NAME`); an *input* subscribes
@@ -24,17 +24,13 @@ Bumping the FFmpeg pin = update `FFMPEG_MASTER_COMMIT` and re-verify
   publisher gets "stream name in use" and exit 98/`EADDRINUSE`).
 - `cert_hash=HEX` — SHA-256 of the gateway cert DER (64 hex chars);
   pins like a browser's `serverCertificateHashes`.
-- `cert_hash_file=PATH` — read the gateway's runtime `cert-hash.js`
-  (a web artifact: `window.CERT_HASH = "<hex>"`; `= null` selects PKI)
-  and use its value — same parser as quicsrt-dump's
-  `--cert-hash-file`; a missing or malformed file fails the open.
-- `pki=1` — normal PKI validation. **Default** when no cert parameter
-  is given.
+- `pki=0|1` — normal PKI validation (`1`). **Default** when no cert
+  parameter is given; mutually exclusive with `cert_hash`.
 - `latency_ms=N` — TSBPD latency floor (default 120).
 - All parameters are also protocol AVOptions (e.g. `ffmpeg -stream NAME
   -i quicsrt://gw:4435`); a URL parameter takes precedence over the
   option value. String values are percent-decoded
-  (`cert_hash_file=/tmp/a%20b.js`); `pki=1` is the only accepted value.
+  (`stream=my%20stream`); `pki` accepts `0` or `1`.
 
 ## The golden commands
 
@@ -47,11 +43,14 @@ resolved):
 
 Locally, run the pair against the supervised `QuicSRT-gateway`
 (ports per its live config, `/etc/QuicSRT-gateway/gateway.conf` — currently
-WT 4435, web 8443; never launch an ad-hoc gateway):
+WT 4435, web 8443; never launch an ad-hoc gateway). The gateway's cert
+is self-signed, so pin it: fetch `cert-hash.js` and pull the 64-hex
+hash out in the shell:
 
-    CERT_JS=$(mktemp)
-    curl -fsS -k https://127.0.0.1:8443/cert-hash.js >"$CERT_JS"
-    URL="quicsrt://127.0.0.1:4435?stream=test&cert_hash_file=$CERT_JS"
+    CERT_HASH=$(curl -fsS -k https://127.0.0.1:8443/cert-hash.js \
+        | sed -n 's/.*"\([0-9a-fA-F]\{64\}\)".*/\1/p')
+    test -n "$CERT_HASH" || { echo "no cert hash in cert-hash.js" >&2; exit 1; }
+    URL="quicsrt://127.0.0.1:4435?stream=test&cert_hash=$CERT_HASH"
 
     ./deps/ffmpeg/ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
         -re -f lavfi -i sine=frequency=440 \
@@ -74,10 +73,14 @@ Notes:
   buffer, so any caller buffer size works; the protocol blocks (1 s
   poll granularity) and a 15 s dataless stall fails the input.
 - The generic `rw_timeout` (ffmpeg `-timeout`, microseconds) overrides
-  both stall bounds; the AVIO interrupt callback is honored throughout
-  open/read/write, so Ctrl+C stays responsive inside those windows.
-- A subscribing open retries the gateway's HTTP 404 for up to 20 s
-  (live-edge join while a broadcast is starting); after that it fails.
+  both stall bounds; the AVIO interrupt callback is honored in the
+  read/write loops and short-circuits graceful teardown at close, so
+  Ctrl+C stays responsive during stalls.
+- Opens are a single attempt: connect-level failures fail fast (the
+  library's connect timeout, 10 s default), a gateway 404 fails the
+  subscribe immediately (`ECONNREFUSED`), and a gateway that holds a
+  publisher-less session open leaves the input to the 15 s read stall
+  bound. Start the publisher before the subscriber.
 - Close on the output does a graceful stream end (flush + ACK drain +
   shutdown): subscribers see EOF and the stream name frees. Stats lines
   appear at `AV_LOG_DEBUG` every 5 s and once at close (`-loglevel debug`).

@@ -36,9 +36,7 @@ With a [patched upstream FFmpeg](examples/ffmpeg) (`./build.sh ffmpeg`):
     ffmpeg -f mpegts -i quicsrt://gw:443?stream=test -c copy out.ts
 
 The same URL publishes and subscribes; `?stream=` names the stream. Pin a
-self-signed gateway with `?cert_hash=<64 hex>` or
-`?cert_hash_file=cert-hash.js` (the gateway's runtime file); omit the
-parameter for PKI.
+self-signed gateway with `?cert_hash=<64 hex>`; omit the parameter for PKI.
 
 From C++:
 
