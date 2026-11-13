@@ -34,7 +34,7 @@ BORINGSSL_COMMIT=e20e8486554098772673b55ea76bb003d0b330e5
 # reproducibility; bumping = update the SHA, re-verify ./build.sh ffmpeg
 # + the golden gate. deps/ffmpeg is fetched (not a submodule, gitignored)
 # and the committed patch is applied on top.
-FFMPEG_MASTER_COMMIT=24e860f6d3c4f2ebae65ed7649e2a8860d512879
+FFMPEG_MASTER_COMMIT=f8bb61cd57a714b4eb8a9f8002dbb5214eed48c7
 
 # deps/boringssl is fetched (not a submodule, gitignored) and built
 # out-of-source; idempotent: no-op clone when the pin matches, fetch+checkout
@@ -96,7 +96,7 @@ build_shared() {
 # the pin matches, the apply when the tree is already patched, and the
 # compile is incremental.
 build_ffmpeg() {
-    local patch="examples/ffmpeg/0001-avformat-add-quicsrt-protocol.patch"
+    local patch="examples/ffmpeg/0001-avformat-add-libquicsrt-protocol.patch"
     local repo_dir="$PWD"
 
     [ -f deps/boringssl/build/libssl.a ] || {
@@ -112,7 +112,7 @@ build_ffmpeg() {
 
     # A raw SHA can't be used with `git clone --branch`, so init + fetch
     # the pin directly. reset+clean matter: an already-patched tree would
-    # otherwise leave the patch's untracked files (quicsrtproto.c) behind,
+    # otherwise leave the patch's untracked files (libquicsrt.c) behind,
     # breaking the apply step below.
     if [ ! -d deps/ffmpeg/.git ]; then
         git init -q deps/ffmpeg
@@ -128,7 +128,7 @@ build_ffmpeg() {
         git -C deps/ffmpeg clean -fdqx
     fi
 
-    if [ ! -f deps/ffmpeg/libavformat/quicsrtproto.c ]; then
+    if [ ! -f deps/ffmpeg/libavformat/libquicsrt.c ]; then
         git -C deps/ffmpeg apply "$repo_dir/$patch"
     fi
 
